@@ -2,7 +2,6 @@
 
 **Lotto Generator Pro**는 파이썬과 PyQt6로 제작된 현대적이고 강력한 로또 번호 생성기입니다. 동행복권 공식 API를 연동하여 실시간 당첨 정보를 제공하며, 사용자 맞춤형 옵션과 분석 알고리즘을 통해 최적의 행운 번호를 제안합니다.
 
-![Screenshot](screenshot.png)
 
 ## ✨ 주요 기능
 
@@ -51,5 +50,3 @@ python lottogemini3.py
 - Windows: `C:\Users\Username\.lotto_generator\`
 - macOS/Linux: `~/.lotto_generator/`
 
----
-Copyright (c) 2025 Google Antigravity Team
