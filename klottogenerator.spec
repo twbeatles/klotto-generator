@@ -39,7 +39,7 @@ exclude_modules = [
     'PyQt6.QtWebSockets', 'PyQt6.QtXml',
     
     # 기타
-    'email', 'html', 'http.server', 'xmlrpc',
+    'html', 'http.server', 'xmlrpc',
     'multiprocessing', 'concurrent', 'asyncio',
     'sqlite3', 'bz2', 'lzma',
 ]
@@ -51,6 +51,7 @@ hidden_imports = [
     'PyQt6.QtWidgets',
     'qrcode',
     'PIL.ImageQt',
+    'email',
 ]
 
 a = Analysis(
