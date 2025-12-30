@@ -24,9 +24,16 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QFont, QColor, QShortcut, QKeySequence, QPainter,
-    QLinearGradient, QBrush, QPen, QRadialGradient
+    QLinearGradient, QBrush, QPen, QRadialGradient, QPixmap, QImage
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize
+
+try:
+    import qrcode
+    from PIL import ImageQt
+    HAS_QRCODE = True
+except ImportError:
+    HAS_QRCODE = False
 
 # ============================================================
 # 로깅 설정
@@ -852,6 +859,25 @@ class ResultRow(QWidget):
         copy_btn.clicked.connect(self._copy_numbers)
         layout.addWidget(copy_btn)
         
+        # QR 버튼
+        qr_btn = QPushButton("📱")
+        qr_btn.setFixedSize(28, 28)
+        qr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        qr_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                font-size: 14px;
+                border-radius: 14px;
+            }}
+            QPushButton:hover {{
+                background: {t['bg_tertiary']};
+            }}
+        """)
+        qr_btn.setToolTip("QR 코드 보기")
+        qr_btn.clicked.connect(self._show_qr)
+        layout.addWidget(qr_btn)
+        
         # 즐겨찾기 버튼
         fav_btn = QPushButton("☆")
         fav_btn.setFixedSize(28, 28)
@@ -880,6 +906,11 @@ class ResultRow(QWidget):
         nums_str = " ".join(f"{n:02d}" for n in self.numbers)
         QApplication.clipboard().setText(nums_str)
         self.copyClicked.emit(self.numbers)
+    
+    def _show_qr(self):
+        """QR 코드 다이얼로그 표시"""
+        dialog = QRCodeDialog(self.numbers, self)
+        dialog.exec()
     
     def _apply_theme(self):
         """테마 적용 - 홀수/짝수 행 배경색 차별화"""
@@ -1146,6 +1177,102 @@ class WinningInfoWidget(QWidget):
 
 
 # ============================================================
+# QR 코드 다이얼로그
+# ============================================================
+class QRCodeDialog(QDialog):
+    """생성된 번호를 QR 코드로 표시"""
+    
+    def __init__(self, numbers: List[int], parent=None):
+        super().__init__(parent)
+        self.numbers = sorted(numbers)
+        self.setWindowTitle("📱 QR 코드")
+        self.setFixedSize(300, 350)
+        self._setup_ui()
+        self._apply_theme()
+        
+    def _setup_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(20)
+        layout.setContentsMargins(30, 30, 30, 30)
+        
+        t = ThemeManager.get_theme()
+        
+        # 안내 텍스트
+        nums_str = " ".join(f"{n:02d}" for n in self.numbers)
+        info_label = QLabel(f"번호: {nums_str}")
+        info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info_label.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {t['text_primary']};")
+        layout.addWidget(info_label)
+        
+        # QR 코드 이미지
+        self.qr_label = QLabel()
+        self.qr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.qr_label.setFixedSize(200, 200)
+        self.qr_label.setStyleSheet("background-color: white; border-radius: 10px;")
+        
+        if HAS_QRCODE:
+            self._generate_qr()
+        else:
+            self.qr_label.setText("qrcode 라이브러리가\n설치되지 않았습니다.")
+            
+        layout.addWidget(self.qr_label, alignment=Qt.AlignmentFlag.AlignCenter)
+        
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['accent']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: {t['accent_hover']}; }}
+        """)
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+        
+        self.setLayout(layout)
+    
+    def _generate_qr(self):
+        try:
+            # 텍스트 형식으로 생성 (단순 복사용)
+            # 동행복권 URL 형식은 복잡하고 유효성 검증이 있어 단순 텍스트가 안전함
+            data = f"Lotto 6/45 Generator\nNumbers: {self.numbers}"
+            
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=2,
+            )
+            qr.add_data(data)
+            qr.make(fit=True)
+            
+            img = qr.make_image(fill_color="black", back_color="white")
+            
+            # PIL 이미지를 QPixmap으로 변환
+            # ImageQt를 직접 사용하면 일부 환경에서 에러 발생 가능성 있어 안전하게 변환
+            import io
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            qimg = QImage.fromData(buffer.getvalue())
+            pixmap = QPixmap.fromImage(qimg)
+            
+            self.qr_label.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            
+        except Exception as e:
+            logger.error(f"QR Code generation failed: {e}")
+            self.qr_label.setText("QR 생성 실패")
+
+    def _apply_theme(self):
+        t = ThemeManager.get_theme()
+        self.setStyleSheet(f"background-color: {t['bg_primary']};")
+
+
+# ============================================================
 # 통계 다이얼로그
 # ============================================================
 class StatisticsDialog(QDialog):
@@ -1348,6 +1475,23 @@ class HistoryDialog(QDialog):
         copy_btn.clicked.connect(self._copy_selected)
         btn_layout.addWidget(copy_btn)
         
+        # QR 버튼
+        qr_btn = QPushButton("📱 QR")
+        qr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        qr_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['success']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: {t['success_light']}; color: {t['success']}; }}
+        """)
+        qr_btn.clicked.connect(self._show_selected_qr)
+        btn_layout.addWidget(qr_btn)
+        
         # 히스토리 삭제 버튼
         clear_btn = QPushButton("🗑️ 전체 삭제")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1433,6 +1577,16 @@ class HistoryDialog(QDialog):
             QMessageBox.information(self, "복사 완료", f"번호가 복사되었습니다:\n{nums_str}")
         else:
             QMessageBox.warning(self, "선택 필요", "복사할 항목을 선택하세요.")
+            
+    def _show_selected_qr(self):
+        row = self.list_widget.currentRow()
+        if row >= 0:
+            item = self.list_widget.item(row)
+            numbers = item.data(Qt.ItemDataRole.UserRole)
+            dialog = QRCodeDialog(numbers, self)
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "선택 필요", "QR 코드를 볼 항목을 선택하세요.")
     
     def _clear_history(self):
         if not self.history_manager.get_all():

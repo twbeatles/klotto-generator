@@ -104,4 +104,3 @@ pyinstaller klottogenerator.spec
 - 즐겨찾기 기능
 
 ---
-Copyright (c) 2025 Google Antigravity Team
