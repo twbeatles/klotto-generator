@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-Lotto Generator Pro v2.1 - PyInstaller Spec File (Onefile Mode)
+Lotto Generator Pro v2.2 - PyInstaller Spec File (Onefile Mode)
 빌드 명령어: pyinstaller klottogenerator.spec
 """
 
@@ -29,7 +29,7 @@ exclude_modules = [
     # PyQt6 불필요 모듈
     'PyQt6.QtBluetooth', 'PyQt6.QtDBus', 'PyQt6.QtDesigner',
     'PyQt6.QtHelp', 'PyQt6.QtMultimedia', 'PyQt6.QtMultimediaWidgets',
-    'PyQt6.QtNetwork', 'PyQt6.QtNfc', 'PyQt6.QtOpenGL',
+    'PyQt6.QtNfc', 'PyQt6.QtOpenGL',
     'PyQt6.QtOpenGLWidgets', 'PyQt6.QtPositioning', 'PyQt6.QtPrintSupport',
     'PyQt6.QtQml', 'PyQt6.QtQuick', 'PyQt6.QtQuick3D', 'PyQt6.QtQuickWidgets',
     'PyQt6.QtRemoteObjects', 'PyQt6.QtSensors', 'PyQt6.QtSerialPort',

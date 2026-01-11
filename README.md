@@ -1,4 +1,4 @@
-# 🎰 Lotto 6/45 Generator Pro v2.1
+# 🎰 Lotto 6/45 Generator Pro v2.2
 
 **Lotto Generator Pro**는 파이썬과 PyQt6로 제작된 현대적이고 강력한 로또 번호 생성기입니다. 동행복권 공식 API를 연동하여 실시간 당첨 정보를 제공하며, 사용자 맞춤형 옵션과 분석 알고리즘을 통해 최적의 행운 번호를 제안합니다.
 
@@ -88,6 +88,12 @@ pyinstaller klottogenerator.spec
 - macOS/Linux: `~/.lotto_generator/`
 
 ## 📝 변경 이력
+
+### v2.2 (2026-01-11)
+- ⚡ 네트워크 엔진 교체 (안정성 향상)
+- 🛡️ 입력값 검증 시스템 강화
+- 🩹 글로벌 에러 핸들링 추가
+- ✨ 예외 상황 처리 최적화
 
 ### v2.1 (2025-12-30)
 - ✨ 번호 통계 기능 추가

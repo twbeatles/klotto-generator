@@ -26,7 +26,8 @@ from PyQt6.QtGui import (
     QFont, QColor, QShortcut, QKeySequence, QPainter,
     QLinearGradient, QBrush, QPen, QRadialGradient, QPixmap, QImage
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize, QUrl
 
 try:
     import qrcode
@@ -61,7 +62,7 @@ logger = setup_logging()
 # ============================================================
 APP_CONFIG = {
     'APP_NAME': 'Lotto 6/45 Generator Pro',
-    'VERSION': '2.1',
+    'VERSION': '2.2',
     'WINDOW_SIZE': (680, 980),
     'FAVORITES_FILE': Path.home() / ".lotto_generator" / "favorites.json",
     'HISTORY_FILE': Path.home() / ".lotto_generator" / "history.json",
@@ -70,6 +71,8 @@ APP_CONFIG = {
     'OPTIMAL_SUM_RANGE': (100, 175),
     'API_TIMEOUT': 10,
     'MAX_HISTORY': 500,  # 최대 히스토리 개수
+    'WINNING_STATS_FILE': Path.home() / ".lotto_generator" / "winning_stats.json",
+    'WINNING_STATS_CACHE_SIZE': 100,  # 캐시할 최근 회차 수
 }
 
 LOTTO_COLORS = {
@@ -469,48 +472,394 @@ class NumberAnalyzer:
 # ============================================================
 # API 워커
 # ============================================================
-class LottoApiWorker(QThread):
-    """동행복권 API에서 로또 당첨 정보를 가져오는 워커 스레드"""
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
+# ============================================================
+# API 매니저 (QNetworkAccessManager 기반)
+# ============================================================
+class LottoNetworkManager(QWidget):
+    """동행복권 API 통신 관리자 (비동기)"""
+    dataLoaded = pyqtSignal(dict)
+    errorOccurred = pyqtSignal(str)
     
-    def __init__(self, draw_no: int):
-        super().__init__()
-        self.draw_no = draw_no
-        self._is_cancelled = False
-    
-    def cancel(self):
-        self._is_cancelled = True
-    
-    def run(self):
-        try:
-            if self._is_cancelled:
-                return
-                
-            url = DHLOTTERY_API_URL.format(self.draw_no)
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            })
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.manager = QNetworkAccessManager(self)
+        self.manager.finished.connect(self._on_finished)
+        self._current_reply: Optional[QNetworkReply] = None
+        
+    def fetch_draw(self, draw_no: int):
+        """회차 정보 요청"""
+        if self._current_reply and self._current_reply.isRunning():
+            self._current_reply.abort()
             
-            with urllib.request.urlopen(req, timeout=APP_CONFIG['API_TIMEOUT']) as response:
-                data = json.loads(response.read().decode('utf-8'))
-                if self._is_cancelled:
-                    return
-                if data.get('returnValue') == 'success':
-                    logger.info(f"Successfully fetched draw #{self.draw_no}")
-                    self.finished.emit(data)
-                else:
-                    self.error.emit("해당 회차의 정보를 찾을 수 없습니다.")
-                    
-        except urllib.error.URLError as e:
-            logger.error(f"Network error: {e}")
-            self.error.emit(f"네트워크 오류: {str(e)}")
+        url = QUrl(DHLOTTERY_API_URL.format(draw_no))
+        request = QNetworkRequest(url)
+        request.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, 
+                         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        
+        logger.info(f"Requesting draw #{draw_no}")
+        self._current_reply = self.manager.get(request)
+        self._current_reply.setProperty('draw_no', draw_no)
+        
+    def cancel(self):
+        """요청 취소"""
+        if self._current_reply and self._current_reply.isRunning():
+            self._current_reply.abort()
+            self._current_reply = None
+            
+    def _on_finished(self, reply: QNetworkReply):
+        """요청 완료 처리"""
+        if reply != self._current_reply:
+            return
+            
+        self._current_reply = None
+        reply.deleteLater()
+        
+        draw_no = reply.property('draw_no')
+        
+        if reply.error() != QNetworkReply.NetworkError.NoError:
+            if reply.error() == QNetworkReply.NetworkError.OperationCanceledError:
+                return # 취소됨
+            
+            error_msg = f"Network Error: {reply.errorString()}"
+            logger.error(error_msg)
+            self.errorOccurred.emit("네트워크 오류가 발생했습니다.")
+            return
+            
+        try:
+            data_bytes = reply.readAll()
+            data_str = str(data_bytes, 'utf-8')
+            data = json.loads(data_str)
+            
+            if data.get('returnValue') == 'success':
+                logger.info(f"Successfully fetched draw #{draw_no}")
+                self.dataLoaded.emit(data)
+            else:
+                self.errorOccurred.emit("해당 회차의 정보를 찾을 수 없습니다.")
+                
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error: {e}")
-            self.error.emit("데이터 파싱 오류")
+            self.errorOccurred.emit("데이터 파싱 오류")
         except Exception as e:
             logger.error(f"Unknown error: {e}")
-            self.error.emit(f"알 수 없는 오류: {str(e)}")
+            self.errorOccurred.emit(f"알 수 없는 오류: {str(e)}")
+
+
+# ============================================================
+# 역대 당첨 번호 통계 관리
+# ============================================================
+class WinningStatsManager:
+    """역대 당첨 번호 통계 관리"""
+    
+    def __init__(self):
+        self.stats_file = APP_CONFIG['WINNING_STATS_FILE']
+        self.winning_data: List[Dict] = []
+        self._load()
+    
+    def _load(self):
+        """파일에서 통계 데이터 로드"""
+        try:
+            if self.stats_file.exists():
+                with open(self.stats_file, 'r', encoding='utf-8') as f:
+                    self.winning_data = json.load(f)
+                logger.info(f"Loaded {len(self.winning_data)} winning records")
+        except Exception as e:
+            logger.error(f"Failed to load winning stats: {e}")
+            self.winning_data = []
+    
+    def _save(self):
+        """통계 데이터 저장 (Atomic)"""
+        try:
+            self.stats_file.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = self.stats_file.with_suffix('.tmp')
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(self.winning_data, f, ensure_ascii=False, indent=2)
+            # Atomic replacement
+            if self.stats_file.exists():
+                os.replace(temp_file, self.stats_file)
+            else:
+                os.rename(temp_file, self.stats_file)
+        except Exception as e:
+            logger.error(f"Failed to save winning stats: {e}")
+            # Clean up temp file if exists
+            try:
+                if 'temp_file' in locals() and temp_file.exists():
+                    temp_file.unlink()
+            except: pass
+    
+    def add_winning_data(self, draw_no: int, numbers: List[int], bonus: int):
+        """당첨 데이터 추가"""
+        # 중복 체크
+        if any(d['draw_no'] == draw_no for d in self.winning_data):
+            return
+        
+        self.winning_data.append({
+            'draw_no': draw_no,
+            'numbers': sorted(numbers),
+            'bonus': bonus,
+            'date': datetime.datetime.now().isoformat()
+        })
+        
+        # 회차순 정렬
+        self.winning_data.sort(key=lambda x: x['draw_no'], reverse=True)
+        
+        # 캐시 크기 제한
+        if len(self.winning_data) > APP_CONFIG['WINNING_STATS_CACHE_SIZE']:
+            self.winning_data = self.winning_data[:APP_CONFIG['WINNING_STATS_CACHE_SIZE']]
+        
+        self._save()
+    
+    def get_frequency_analysis(self) -> Dict:
+        """번호별 출현 빈도 분석"""
+        if not self.winning_data:
+            return {}
+        
+        # 번호별 출현 횟수
+        number_counts = {i: 0 for i in range(1, 46)}
+        bonus_counts = {i: 0 for i in range(1, 46)}
+        
+        for data in self.winning_data:
+            for num in data['numbers']:
+                number_counts[num] += 1
+            bonus_counts[data['bonus']] += 1
+        
+        # 정렬
+        sorted_by_count = sorted(number_counts.items(), key=lambda x: x[1], reverse=True)
+        
+        return {
+            'total_draws': len(self.winning_data),
+            'number_counts': number_counts,
+            'bonus_counts': bonus_counts,
+            'hot_numbers': sorted_by_count[:10],  # 핫 넘버 TOP 10
+            'cold_numbers': sorted_by_count[-10:],  # 콜드 넘버 10개
+        }
+    
+    def get_range_distribution(self) -> Dict:
+        """번호대별 분포 분석"""
+        if not self.winning_data:
+            return {}
+        
+        ranges = {'1-10': 0, '11-20': 0, '21-30': 0, '31-40': 0, '41-45': 0}
+        
+        for data in self.winning_data:
+            for n in data['numbers']:
+                if n <= 10: ranges['1-10'] += 1
+                elif n <= 20: ranges['11-20'] += 1
+                elif n <= 30: ranges['21-30'] += 1
+                elif n <= 40: ranges['31-40'] += 1
+                else: ranges['41-45'] += 1
+        
+        return ranges
+    
+    def get_pair_analysis(self) -> Dict:
+        """연속 당첨 쌍 분석 (같이 나온 번호 쌍)"""
+        if not self.winning_data:
+            return {}
+        
+        pair_counts = {}
+        
+        for data in self.winning_data:
+            nums = data['numbers']
+            for i in range(len(nums)):
+                for j in range(i + 1, len(nums)):
+                    pair = (nums[i], nums[j])
+                    pair_counts[pair] = pair_counts.get(pair, 0) + 1
+        
+        # 가장 많이 나온 쌍 TOP 10
+        sorted_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)
+        return {'top_pairs': sorted_pairs[:10]}
+    
+    def get_recent_trend(self, count: int = 10) -> List[Dict]:
+        """최근 N회차 트렌드"""
+        return self.winning_data[:count]
+
+
+# ============================================================
+# 통계 기반 스마트 번호 생성기
+# ============================================================
+class SmartNumberGenerator:
+    """통계 기반 스마트 번호 생성"""
+    
+    def __init__(self, stats_manager: WinningStatsManager):
+        self.stats_manager = stats_manager
+    
+    def generate_smart_numbers(self, fixed_nums: Set[int] = None, 
+                                exclude_nums: Set[int] = None,
+                                prefer_hot: bool = True,
+                                balance_mode: bool = True) -> List[int]:
+        """스마트 번호 생성"""
+        fixed_nums = fixed_nums or set()
+        exclude_nums = exclude_nums or set()
+        
+        # 통계 데이터 가져오기
+        analysis = self.stats_manager.get_frequency_analysis()
+        
+        if not analysis:
+            # 통계 데이터 없으면 일반 랜덤 생성
+            available = set(range(1, 46)) - fixed_nums - exclude_nums
+            remaining = 6 - len(fixed_nums)
+            return sorted(list(fixed_nums) + random.sample(list(available), remaining))
+        
+        number_counts = analysis['number_counts']
+        max_count = max(number_counts.values()) if number_counts.values() else 1
+        
+        # 초기 후보군 생성 (가중치 계산)
+        candidates = []
+        for num in range(1, 46):
+            if num in fixed_nums or num in exclude_nums:
+                continue
+            
+            count = number_counts.get(num, 0)
+            if prefer_hot:
+                weight = count + 1
+            else:
+                weight = max_count - count + 1
+            candidates.append((num, weight))
+        
+        result = list(fixed_nums)
+        
+        # 번호 선택 루프
+        while len(result) < 6 and candidates:
+            # 균형 모드일 경우 유효한 후보 필터링
+            current_candidates = candidates
+            
+            if balance_mode:
+                valid_candidates = []
+                remaining_slots = 6 - len(result)
+                current_odd = sum(1 for n in result if n % 2 == 1)
+                
+                for num, weight in candidates:
+                    is_odd = (num % 2 == 1)
+                    
+                    # 1. 홀수 과다 방지: 홀수가 이미 4개면 홀수 선택 불가
+                    if is_odd and current_odd >= 4:
+                        continue
+                        
+                    # 2. 짝수 과다 방지: (홀수 부족 방지)
+                    # 짝수를 골랐을 때, 남은 자리를 모두 홀수로 채워도 최소 홀수(2개)를 만족 못하면 안됨
+                    # 즉: 현재홀수 + (남은자리-1) < 2 이면 짝수 선택 불가
+                    if not is_odd:
+                        max_possible_odd = current_odd + (remaining_slots - 1)
+                        if max_possible_odd < 2:
+                            continue
+                            
+                    valid_candidates.append((num, weight))
+                
+                current_candidates = valid_candidates
+                
+            if not current_candidates:
+                break
+                
+            # 가중치 기반 확률 선택
+            total_weight = sum(w for n, w in current_candidates)
+            if total_weight <= 0:
+                # 비상시 (혹은 실수로) 랜덤 선택
+                selected_tuple = random.choice(current_candidates)
+            else:
+                r = random.uniform(0, total_weight)
+                cumulative = 0
+                selected_tuple = None
+                
+                for item in current_candidates:
+                    cumulative += item[1]
+                    if cumulative >= r:
+                        selected_tuple = item
+                        break
+                
+                if not selected_tuple:
+                    selected_tuple = current_candidates[-1]
+            
+            selected_num = selected_tuple[0]
+            result.append(selected_num)
+            
+            # 선택된 번호 제거 (원본 후보군에서)
+            candidates = [c for c in candidates if c[0] != selected_num]
+        
+        return sorted(result)
+    
+    def generate_balanced_set(self, count: int = 5, 
+                               fixed_nums: Set[int] = None,
+                               exclude_nums: Set[int] = None) -> List[List[int]]:
+        """균형 잡힌 세트 생성 (다양한 전략 조합)"""
+        results = []
+        strategies = [
+            {'prefer_hot': True, 'balance_mode': True},   # 핫넘버 + 균형
+            {'prefer_hot': False, 'balance_mode': True},  # 콜드넘버 + 균형
+            {'prefer_hot': True, 'balance_mode': False},  # 핫넘버만
+        ]
+        
+        for i in range(count):
+            strategy = strategies[i % len(strategies)]
+            nums = self.generate_smart_numbers(
+                fixed_nums=fixed_nums,
+                exclude_nums=exclude_nums,
+                **strategy
+            )
+            results.append(nums)
+        
+        return results
+
+
+# ============================================================
+# 데이터 내보내기/가져오기
+# ============================================================
+class DataExporter:
+    """데이터 내보내기/가져오기"""
+    
+    @staticmethod
+    def export_to_csv(data: List[Dict], filepath: str, data_type: str = 'favorites'):
+        """CSV로 내보내기"""
+        try:
+            with open(filepath, 'w', encoding='utf-8-sig', newline='') as f:
+                if data_type == 'favorites':
+                    f.write("번호1,번호2,번호3,번호4,번호5,번호6,메모,생성일\n")
+                    for item in data:
+                        nums = item.get('numbers', [])
+                        memo = item.get('memo', '')
+                        created = item.get('created_at', '')
+                        f.write(f"{','.join(map(str, nums))},{memo},{created}\n")
+                elif data_type == 'history':
+                    f.write("번호1,번호2,번호3,번호4,번호5,번호6,생성일\n")
+                    for item in data:
+                        nums = item.get('numbers', [])
+                        created = item.get('created_at', '')
+                        f.write(f"{','.join(map(str, nums))},{created}\n")
+                elif data_type == 'winning_stats':
+                    f.write("회차,번호1,번호2,번호3,번호4,번호5,번호6,보너스\n")
+                    for item in data:
+                        draw_no = item.get('draw_no', '')
+                        nums = item.get('numbers', [])
+                        bonus = item.get('bonus', '')
+                        f.write(f"{draw_no},{','.join(map(str, nums))},{bonus}\n")
+            
+            logger.info(f"Exported {len(data)} items to {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to export CSV: {e}")
+            return False
+    
+    @staticmethod
+    def export_to_json(data: List[Dict], filepath: str):
+        """JSON으로 내보내기"""
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Exported {len(data)} items to {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to export JSON: {e}")
+            return False
+    
+    @staticmethod
+    def import_from_json(filepath: str) -> Optional[List[Dict]]:
+        """JSON에서 가져오기"""
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"Imported {len(data)} items from {filepath}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to import JSON: {e}")
+            return None
 
 
 # ============================================================
@@ -536,14 +885,24 @@ class FavoritesManager:
             self.favorites = []
     
     def _save(self):
-        """즐겨찾기를 파일에 저장"""
+        """즐겨찾기를 파일에 저장 (Atomic)"""
         try:
             self.favorites_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.favorites_file, 'w', encoding='utf-8') as f:
+            temp_file = self.favorites_file.with_suffix('.tmp')
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.favorites, f, ensure_ascii=False, indent=2)
+            
+            if self.favorites_file.exists():
+                os.replace(temp_file, self.favorites_file)
+            else:
+                os.rename(temp_file, self.favorites_file)
             logger.info(f"Saved {len(self.favorites)} favorites")
         except Exception as e:
             logger.error(f"Failed to save favorites: {e}")
+            try:
+                if 'temp_file' in locals() and temp_file.exists():
+                    temp_file.unlink()
+            except: pass
     
     def add(self, numbers: List[int], memo: str = "") -> bool:
         """즐겨찾기 추가"""
@@ -591,13 +950,23 @@ class HistoryManager:
             self.history = []
     
     def _save(self):
-        """히스토리를 파일에 저장"""
+        """히스토리를 파일에 저장 (Atomic)"""
         try:
             self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.history_file, 'w', encoding='utf-8') as f:
+            temp_file = self.history_file.with_suffix('.tmp')
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f, ensure_ascii=False, indent=2)
+                
+            if self.history_file.exists():
+                os.replace(temp_file, self.history_file)
+            else:
+                os.rename(temp_file, self.history_file)
         except Exception as e:
             logger.error(f"Failed to save history: {e}")
+            try:
+                if 'temp_file' in locals() and temp_file.exists():
+                    temp_file.unlink()
+            except: pass
     
     def add(self, numbers: List[int]) -> bool:
         """히스토리에 추가 (중복 체크)"""
@@ -938,7 +1307,10 @@ class WinningInfoWidget(QWidget):
     
     def __init__(self):
         super().__init__()
-        self.api_worker: Optional[LottoApiWorker] = None
+        self.network_manager = LottoNetworkManager(self)
+        self.network_manager.dataLoaded.connect(self._on_data_received)
+        self.network_manager.errorOccurred.connect(self._on_error)
+        
         self.current_draw_no = self._get_estimated_latest_draw()
         self.current_data: Optional[Dict] = None
         self._is_collapsed = False
@@ -1079,14 +1451,7 @@ class WinningInfoWidget(QWidget):
         self.numbers_widget.setVisible(False)
         self.prize_widget.setVisible(False)
         
-        if self.api_worker and self.api_worker.isRunning():
-            self.api_worker.cancel()
-            self.api_worker.wait()
-        
-        self.api_worker = LottoApiWorker(draw_no)
-        self.api_worker.finished.connect(self._on_data_received)
-        self.api_worker.error.connect(self._on_error)
-        self.api_worker.start()
+        self.network_manager.fetch_draw(draw_no)
     
     def _on_data_received(self, data: dict):
         """API 데이터 수신 시 UI 업데이트"""
@@ -1800,6 +2165,636 @@ class FavoritesDialog(QDialog):
 
 
 # ============================================================
+# 실제 당첨 번호 통계 다이얼로그
+# ============================================================
+class RealStatsDialog(QDialog):
+    """실제 당첨 번호 통계 다이얼로그"""
+    
+    def __init__(self, stats_manager: WinningStatsManager, parent=None):
+        super().__init__(parent)
+        self.stats_manager = stats_manager
+        self.setWindowTitle("📈 실제 당첨 번호 통계")
+        self.setMinimumSize(600, 550)
+        self._setup_ui()
+        self._apply_theme()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        t = ThemeManager.get_theme()
+        
+        # 통계 데이터 가져오기
+        analysis = self.stats_manager.get_frequency_analysis()
+        range_dist = self.stats_manager.get_range_distribution()
+        pair_analysis = self.stats_manager.get_pair_analysis()
+        recent = self.stats_manager.get_recent_trend(5)
+        
+        if not analysis:
+            # 데이터 없음 안내
+            no_data_label = QLabel("📊 아직 수집된 당첨 데이터가 없습니다.\n\n"
+                                   "당첨 정보 위젯에서 회차를 조회하면\n"
+                                   "자동으로 통계가 수집됩니다.")
+            no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            no_data_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 15px;")
+            layout.addWidget(no_data_label)
+            
+            close_btn = QPushButton("닫기")
+            close_btn.clicked.connect(self.close)
+            layout.addWidget(close_btn)
+            return
+        
+        # 통계 요약
+        summary_label = QLabel(f"📊 총 {analysis['total_draws']}회차 분석 결과")
+        summary_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['accent']};")
+        layout.addWidget(summary_label)
+        
+        # 핫 넘버 그룹
+        hot_group = QGroupBox("🔥 핫 넘버 TOP 10 (가장 많이 나온 번호)")
+        hot_layout = QHBoxLayout(hot_group)
+        hot_layout.setSpacing(8)
+        
+        for num, count in analysis['hot_numbers']:
+            ball = LottoBall(num, size=36)
+            hot_layout.addWidget(ball)
+            count_label = QLabel(f"({count})")
+            count_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 11px;")
+            hot_layout.addWidget(count_label)
+        
+        hot_layout.addStretch()
+        layout.addWidget(hot_group)
+        
+        # 콜드 넘버 그룹
+        cold_group = QGroupBox("❄️ 콜드 넘버 (가장 적게 나온 번호)")
+        cold_layout = QHBoxLayout(cold_group)
+        cold_layout.setSpacing(8)
+        
+        for num, count in analysis['cold_numbers']:
+            ball = LottoBall(num, size=36)
+            cold_layout.addWidget(ball)
+            count_label = QLabel(f"({count})")
+            count_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 11px;")
+            cold_layout.addWidget(count_label)
+        
+        cold_layout.addStretch()
+        layout.addWidget(cold_group)
+        
+        # 번호대별 분포
+        if range_dist:
+            range_group = QGroupBox("📊 번호대별 분포")
+            range_layout = QVBoxLayout(range_group)
+            
+            total_nums = sum(range_dist.values())
+            
+            for range_name, count in range_dist.items():
+                pct = (count / total_nums * 100) if total_nums > 0 else 0
+                row_layout = QHBoxLayout()
+                
+                range_label = QLabel(f"{range_name}:")
+                range_label.setFixedWidth(60)
+                range_label.setStyleSheet(f"font-weight: bold; color: {t['text_primary']};")
+                
+                # 프로그레스 바 효과 (텍스트)
+                bar_width = int(pct * 2)
+                bar = QLabel("█" * bar_width)
+                bar.setStyleSheet(f"color: {t['accent']};")
+                
+                pct_label = QLabel(f"{count}회 ({pct:.1f}%)")
+                pct_label.setStyleSheet(f"color: {t['text_secondary']};")
+                
+                row_layout.addWidget(range_label)
+                row_layout.addWidget(bar)
+                row_layout.addWidget(pct_label)
+                row_layout.addStretch()
+                
+                range_layout.addLayout(row_layout)
+            
+            layout.addWidget(range_group)
+        
+        # 최근 당첨 번호
+        if recent:
+            recent_group = QGroupBox("📅 최근 당첨 번호")
+            recent_layout = QVBoxLayout(recent_group)
+            
+            for data in recent[:5]:
+                row = QHBoxLayout()
+                draw_label = QLabel(f"#{data['draw_no']}회")
+                draw_label.setFixedWidth(70)
+                draw_label.setStyleSheet(f"font-weight: bold; color: {t['accent']};")
+                row.addWidget(draw_label)
+                
+                for num in data['numbers']:
+                    ball = LottoBall(num, size=30)
+                    row.addWidget(ball)
+                
+                # 보너스
+                plus_label = QLabel("+")
+                plus_label.setStyleSheet(f"color: {t['text_muted']};")
+                row.addWidget(plus_label)
+                
+                bonus_ball = LottoBall(data['bonus'], size=30, highlighted=True)
+                row.addWidget(bonus_ball)
+                
+                row.addStretch()
+                recent_layout.addLayout(row)
+            
+            layout.addWidget(recent_group)
+        
+        layout.addStretch()
+        
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.setMinimumHeight(40)
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+    
+    def _apply_theme(self):
+        t = ThemeManager.get_theme()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {t['bg_primary']};
+            }}
+            QGroupBox {{
+                font-weight: bold;
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: {t['bg_secondary']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                padding: 0 8px;
+            }}
+            QPushButton {{
+                background-color: {t['accent']};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                padding: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+        """)
+
+
+# ============================================================
+# 당첨 확인 자동화 다이얼로그
+# ============================================================
+class WinningCheckDialog(QDialog):
+    """당첨 확인 자동화 다이얼로그"""
+    
+    def __init__(self, favorites_manager: FavoritesManager, 
+                 history_manager, stats_manager: WinningStatsManager, parent=None):
+        super().__init__(parent)
+        self.favorites_manager = favorites_manager
+        self.history_manager = history_manager
+        self.stats_manager = stats_manager
+        self.setWindowTitle("🎯 당첨 확인")
+        self.setMinimumSize(650, 500)
+        self._setup_ui()
+        self._apply_theme()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        t = ThemeManager.get_theme()
+        
+        # 설명
+        desc_label = QLabel("저장된 번호가 과거 당첨 번호와 일치하는지 확인합니다.")
+        desc_label.setStyleSheet(f"color: {t['text_secondary']}; font-size: 14px;")
+        layout.addWidget(desc_label)
+        
+        # 번호 선택
+        source_group = QGroupBox("확인할 번호 선택")
+        source_layout = QVBoxLayout(source_group)
+        
+        self.source_combo = QComboBox()
+        self.source_combo.addItem("즐겨찾기에서 선택")
+        self.source_combo.addItem("히스토리에서 선택")
+        self.source_combo.currentIndexChanged.connect(self._update_number_list)
+        source_layout.addWidget(self.source_combo)
+        
+        self.number_list = QListWidget()
+        self.number_list.setMaximumHeight(150)
+        source_layout.addWidget(self.number_list)
+        
+        layout.addWidget(source_group)
+        
+        # 확인 버튼
+        check_btn = QPushButton("🔍 당첨 확인 실행")
+        check_btn.setMinimumHeight(45)
+        check_btn.clicked.connect(self._run_check)
+        layout.addWidget(check_btn)
+        
+        # 결과 영역
+        result_group = QGroupBox("확인 결과")
+        result_layout = QVBoxLayout(result_group)
+        
+        self.result_area = QScrollArea()
+        self.result_area.setWidgetResizable(True)
+        self.result_container = QWidget()
+        self.result_inner_layout = QVBoxLayout(self.result_container)
+        self.result_inner_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.result_area.setWidget(self.result_container)
+        result_layout.addWidget(self.result_area)
+        
+        layout.addWidget(result_group, 1)
+        
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.setMinimumHeight(40)
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+        
+        # 초기 데이터 로드
+        self._update_number_list()
+    
+    def _update_number_list(self):
+        self.number_list.clear()
+        
+        if self.source_combo.currentIndex() == 0:
+            # 즐겨찾기
+            for fav in self.favorites_manager.get_all():
+                nums = fav.get('numbers', [])
+                memo = fav.get('memo', '')
+                text = f"{', '.join(map(str, nums))}"
+                if memo:
+                    text += f" ({memo})"
+                self.number_list.addItem(text)
+        else:
+            # 히스토리
+            for hist in self.history_manager.get_recent(50):
+                nums = hist.get('numbers', [])
+                text = f"{', '.join(map(str, nums))}"
+                self.number_list.addItem(text)
+    
+    def _run_check(self):
+        # 결과 초기화
+        while self.result_inner_layout.count():
+            item = self.result_inner_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        
+        t = ThemeManager.get_theme()
+        
+        # 선택된 번호 가져오기
+        row = self.number_list.currentRow()
+        if row < 0:
+            QMessageBox.warning(self, "선택 필요", "확인할 번호를 선택하세요.")
+            return
+        
+        if self.source_combo.currentIndex() == 0:
+            data = self.favorites_manager.get_all()
+        else:
+            data = self.history_manager.get_recent(50)
+        
+        if row >= len(data):
+            return
+        
+        my_numbers = set(data[row].get('numbers', []))
+        
+        # 저장된 당첨 데이터로 확인
+        winning_data = self.stats_manager.winning_data
+        
+        if not winning_data:
+            no_result = QLabel("확인할 당첨 데이터가 없습니다.\n당첨 정보 위젯에서 회차를 조회해 주세요.")
+            no_result.setStyleSheet(f"color: {t['text_muted']}; padding: 20px;")
+            no_result.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.result_inner_layout.addWidget(no_result)
+            return
+        
+        found_any = False
+        
+        for win_data in winning_data:
+            draw_no = win_data['draw_no']
+            winning_nums = set(win_data['numbers'])
+            bonus = win_data['bonus']
+            
+            matched = my_numbers & winning_nums
+            match_count = len(matched)
+            bonus_matched = bonus in my_numbers
+            
+            # 등수 판정
+            rank = None
+            if match_count == 6:
+                rank = 1
+            elif match_count == 5 and bonus_matched:
+                rank = 2
+            elif match_count == 5:
+                rank = 3
+            elif match_count == 4:
+                rank = 4
+            elif match_count == 3:
+                rank = 5
+            
+            if match_count >= 3:
+                found_any = True
+                
+                # 결과 행 생성
+                result_row = QFrame()
+                result_row.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {t['bg_secondary']};
+                        border: 1px solid {t['border']};
+                        border-radius: 8px;
+                        padding: 10px;
+                    }}
+                """)
+                row_layout = QVBoxLayout(result_row)
+                
+                # 회차 및 등수
+                header = QHBoxLayout()
+                draw_label = QLabel(f"#{draw_no}회")
+                draw_label.setStyleSheet(f"font-weight: bold; color: {t['accent']};")
+                header.addWidget(draw_label)
+                
+                if rank:
+                    rank_label = QLabel(f"🎉 {rank}등!")
+                    rank_colors = {1: '#FF0000', 2: '#FF6600', 3: '#FFCC00', 4: '#00CC00', 5: '#0066CC'}
+                    rank_label.setStyleSheet(f"font-weight: bold; color: {rank_colors.get(rank, t['text_primary'])};")
+                    header.addWidget(rank_label)
+                
+                match_label = QLabel(f"일치: {match_count}개" + (" +보너스" if bonus_matched else ""))
+                match_label.setStyleSheet(f"color: {t['text_secondary']};")
+                header.addWidget(match_label)
+                header.addStretch()
+                
+                row_layout.addLayout(header)
+                
+                # 번호 비교
+                nums_layout = QHBoxLayout()
+                nums_layout.addWidget(QLabel("내 번호:"))
+                for num in sorted(my_numbers):
+                    highlighted = num in matched
+                    ball = LottoBall(num, size=28, highlighted=highlighted)
+                    nums_layout.addWidget(ball)
+                nums_layout.addStretch()
+                row_layout.addLayout(nums_layout)
+                
+                self.result_inner_layout.addWidget(result_row)
+        
+        if not found_any:
+            no_result = QLabel("😢 3개 이상 일치하는 회차가 없습니다.")
+            no_result.setStyleSheet(f"color: {t['text_muted']}; padding: 20px;")
+            no_result.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.result_inner_layout.addWidget(no_result)
+    
+    def _apply_theme(self):
+        t = ThemeManager.get_theme()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {t['bg_primary']};
+            }}
+            QGroupBox {{
+                font-weight: bold;
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: {t['bg_secondary']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                padding: 0 8px;
+            }}
+            QPushButton {{
+                background-color: {t['accent']};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                padding: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            QComboBox {{
+                padding: 8px;
+                border: 1px solid {t['border']};
+                border-radius: 6px;
+                background-color: {t['bg_secondary']};
+            }}
+            QListWidget {{
+                border: 1px solid {t['border']};
+                border-radius: 6px;
+                background-color: {t['bg_secondary']};
+            }}
+        """)
+
+
+# ============================================================
+# 데이터 내보내기/가져오기 다이얼로그
+# ============================================================
+class ExportImportDialog(QDialog):
+    """데이터 내보내기/가져오기 다이얼로그"""
+    
+    def __init__(self, favorites_manager: FavoritesManager, 
+                 history_manager, stats_manager: WinningStatsManager, parent=None):
+        super().__init__(parent)
+        self.favorites_manager = favorites_manager
+        self.history_manager = history_manager
+        self.stats_manager = stats_manager
+        self.setWindowTitle("📁 데이터 내보내기/가져오기")
+        self.setMinimumSize(450, 350)
+        self._setup_ui()
+        self._apply_theme()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        t = ThemeManager.get_theme()
+        
+        # 내보내기 그룹
+        export_group = QGroupBox("📤 내보내기")
+        export_layout = QVBoxLayout(export_group)
+        
+        # 데이터 유형 선택
+        data_layout = QHBoxLayout()
+        data_layout.addWidget(QLabel("데이터 선택:"))
+        self.data_combo = QComboBox()
+        self.data_combo.addItems(["즐겨찾기", "히스토리", "당첨 통계"])
+        data_layout.addWidget(self.data_combo)
+        data_layout.addStretch()
+        export_layout.addLayout(data_layout)
+        
+        # 형식 선택
+        format_layout = QHBoxLayout()
+        format_layout.addWidget(QLabel("형식:"))
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(["CSV", "JSON"])
+        format_layout.addWidget(self.format_combo)
+        format_layout.addStretch()
+        export_layout.addLayout(format_layout)
+        
+        # 내보내기 버튼
+        export_btn = QPushButton("💾 내보내기")
+        export_btn.clicked.connect(self._export_data)
+        export_layout.addWidget(export_btn)
+        
+        layout.addWidget(export_group)
+        
+        # 가져오기 그룹
+        import_group = QGroupBox("📥 가져오기")
+        import_layout = QVBoxLayout(import_group)
+        
+        import_desc = QLabel("JSON 파일에서 데이터를 가져옵니다.\n기존 데이터에 병합됩니다.")
+        import_desc.setStyleSheet(f"color: {t['text_muted']}; font-size: 12px;")
+        import_layout.addWidget(import_desc)
+        
+        # 가져오기 대상 선택
+        import_target_layout = QHBoxLayout()
+        import_target_layout.addWidget(QLabel("가져오기 대상:"))
+        self.import_combo = QComboBox()
+        self.import_combo.addItems(["즐겨찾기", "히스토리"])
+        import_target_layout.addWidget(self.import_combo)
+        import_target_layout.addStretch()
+        import_layout.addLayout(import_target_layout)
+        
+        import_btn = QPushButton("📂 파일 선택 및 가져오기")
+        import_btn.clicked.connect(self._import_data)
+        import_layout.addWidget(import_btn)
+        
+        layout.addWidget(import_group)
+        
+        layout.addStretch()
+        
+        # 닫기 버튼
+        close_btn = QPushButton("닫기")
+        close_btn.setMinimumHeight(40)
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+    
+    def _export_data(self):
+        data_type_idx = self.data_combo.currentIndex()
+        format_idx = self.format_combo.currentIndex()
+        
+        # 데이터 가져오기
+        if data_type_idx == 0:
+            data = self.favorites_manager.get_all()
+            data_type = 'favorites'
+            default_name = 'lotto_favorites'
+        elif data_type_idx == 1:
+            data = self.history_manager.get_all()
+            data_type = 'history'
+            default_name = 'lotto_history'
+        else:
+            data = self.stats_manager.winning_data
+            data_type = 'winning_stats'
+            default_name = 'lotto_winning_stats'
+        
+        if not data:
+            QMessageBox.warning(self, "데이터 없음", "내보낼 데이터가 없습니다.")
+            return
+        
+        # 파일 저장 다이럿로그
+        if format_idx == 0:
+            ext = "csv"
+            filter_str = "CSV 파일 (*.csv)"
+        else:
+            ext = "json"
+            filter_str = "JSON 파일 (*.json)"
+        
+        filepath, _ = QFileDialog.getSaveFileName(
+            self, "내보내기", f"{default_name}.{ext}", filter_str
+        )
+        
+        if not filepath:
+            return
+        
+        # 내보내기 실행
+        success = False
+        if format_idx == 0:
+            success = DataExporter.export_to_csv(data, filepath, data_type)
+        else:
+            success = DataExporter.export_to_json(data, filepath)
+        
+        if success:
+            QMessageBox.information(self, "완료", f"{len(data)}개 항목이 저장되었습니다.\n{filepath}")
+        else:
+            QMessageBox.warning(self, "오류", "내보내기에 실패했습니다.")
+    
+    def _import_data(self):
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "가져오기", "", "JSON 파일 (*.json)"
+        )
+        
+        if not filepath:
+            return
+        
+        data = DataExporter.import_from_json(filepath)
+        
+        if data is None:
+            QMessageBox.warning(self, "오류", "파일을 읽는데 실패했습니다.")
+            return
+        
+        target_idx = self.import_combo.currentIndex()
+        imported_count = 0
+        
+        if target_idx == 0:
+            # 즐겨찾기에 추가
+            for item in data:
+                if 'numbers' in item:
+                    if self.favorites_manager.add(item['numbers'], item.get('memo', '')):
+                        imported_count += 1
+        else:
+            # 히스토리에 추가
+            for item in data:
+                if 'numbers' in item:
+                    if self.history_manager.add(item['numbers']):
+                        imported_count += 1
+        
+        QMessageBox.information(
+            self, "완료", 
+            f"{imported_count}개 항목이 가져와졌습니다.\n(중복 항목은 제외됨)"
+        )
+    
+    def _apply_theme(self):
+        t = ThemeManager.get_theme()
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {t['bg_primary']};
+            }}
+            QGroupBox {{
+                font-weight: bold;
+                border: 1px solid {t['border']};
+                border-radius: 8px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: {t['bg_secondary']};
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                padding: 0 8px;
+            }}
+            QPushButton {{
+                background-color: {t['accent']};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-weight: bold;
+                padding: 10px;
+            }}
+            QPushButton:hover {{
+                background-color: {t['accent_hover']};
+            }}
+            QComboBox {{
+                padding: 8px;
+                border: 1px solid {t['border']};
+                border-radius: 6px;
+                background-color: {t['bg_secondary']};
+            }}
+        """)
+
+
+# ============================================================
 # 메인 애플리케이션
 # ============================================================
 class LottoApp(QWidget):
@@ -1808,6 +2803,8 @@ class LottoApp(QWidget):
         self.generated_sets: List[List[int]] = []
         self.favorites_manager = FavoritesManager()
         self.history_manager = HistoryManager()  # 히스토리 관리
+        self.stats_manager = WinningStatsManager()  # 당첨 통계 관리
+        self.smart_generator = SmartNumberGenerator(self.stats_manager)  # 스마트 생성기
         self.total_generated = 0
         self.last_generated_time: Optional[datetime.datetime] = None
         
@@ -1865,6 +2862,31 @@ class LottoApp(QWidget):
         self.fav_btn.setToolTip("즐겨찾기 보기")
         self.fav_btn.clicked.connect(self._show_favorites)
         header_layout.addWidget(self.fav_btn)
+        
+        # 실제 통계 버튼
+
+        self.real_stats_btn = QPushButton("📈 실제통계")
+        self.real_stats_btn.setFixedSize(85, 32)
+        self.real_stats_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.real_stats_btn.setToolTip("실제 당첨 번호 통계")
+        self.real_stats_btn.clicked.connect(self._show_real_stats)
+        header_layout.addWidget(self.real_stats_btn)
+        
+        # 당첨 확인 버튼
+        self.winning_check_btn = QPushButton("🎯 당첨확인")
+        self.winning_check_btn.setFixedSize(85, 32)
+        self.winning_check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.winning_check_btn.setToolTip("과거 당첨 확인")
+        self.winning_check_btn.clicked.connect(self._show_winning_check)
+        header_layout.addWidget(self.winning_check_btn)
+        
+        # 내보내기 버튼
+        self.export_btn = QPushButton("📁")
+        self.export_btn.setFixedSize(40, 32)
+        self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_btn.setToolTip("데이터 내보내기/가져오기")
+        self.export_btn.clicked.connect(self._show_export_import)
+        header_layout.addWidget(self.export_btn)
         
         main_layout.addLayout(header_layout)
         
@@ -1948,7 +2970,12 @@ class LottoApp(QWidget):
         # 당첨번호 비교
         self.chk_compare = QCheckBox("지난 당첨번호와 비교")
         self.chk_compare.setToolTip("생성된 번호를 현재 조회된 당첨번호와 비교합니다")
-        settings_layout.addWidget(self.chk_compare, 2, 0, 1, 4)
+        settings_layout.addWidget(self.chk_compare, 2, 0, 1, 2)
+        
+        # 스마트 생성 옵션
+        self.chk_smart_gen = QCheckBox("🧠 스마트 생성 (통계 기반)")
+        self.chk_smart_gen.setToolTip("과거 당첨 통계를 기반으로 번호를 생성합니다")
+        settings_layout.addWidget(self.chk_smart_gen, 2, 2, 1, 2)
         
         self.settings_group.setLayout(settings_layout)
         main_layout.addWidget(self.settings_group)
@@ -2130,6 +3157,16 @@ class LottoApp(QWidget):
     def _on_winning_data_loaded(self, data: dict):
         """당첨 데이터 로드 완료 시"""
         self.status_bar.showMessage(f"당첨 정보 로드 완료: {data.get('drwNo')}회")
+        
+        # 통계에 당첨 데이터 저장
+        try:
+            draw_no = data.get('drwNo')
+            numbers = [data.get(f'drwtNo{i}') for i in range(1, 7)]
+            bonus = data.get('bnusNo')
+            if draw_no and all(numbers) and bonus:
+                self.stats_manager.add_winning_data(draw_no, numbers, bonus)
+        except Exception as e:
+            logger.error(f"Failed to save winning data: {e}")
     
     def _add_to_favorites(self, numbers: List[int]):
         """즐겨찾기에 추가"""
@@ -2153,6 +3190,31 @@ class LottoApp(QWidget):
         dialog = HistoryDialog(self.history_manager, self)
         dialog.exec()
     
+    def _show_real_stats(self):
+        """실제 당첨 통계 다이얼로그 표시"""
+        dialog = RealStatsDialog(self.stats_manager, self)
+        dialog.exec()
+    
+    def _show_winning_check(self):
+        """당첨 확인 다이얼로그 표시"""
+        dialog = WinningCheckDialog(
+            self.favorites_manager, 
+            self.history_manager, 
+            self.stats_manager, 
+            self
+        )
+        dialog.exec()
+    
+    def _show_export_import(self):
+        """내보내기/가져오기 다이얼로그 표시"""
+        dialog = ExportImportDialog(
+            self.favorites_manager,
+            self.history_manager,
+            self.stats_manager,
+            self
+        )
+        dialog.exec()
+    
     def parse_input_numbers(self, text: str) -> Tuple[Set[int], List[str]]:
         """입력값 파싱 및 검증 - 범위 입력 지원 (예: 1-10, 20, 30-35)"""
         if not text.strip():
@@ -2163,6 +3225,7 @@ class LottoApp(QWidget):
         
         # 다양한 구분자 지원: 쉼표, 공백, 세미콜론
         import re
+        # 연속된 구분자는 하나로 처리
         parts = re.split(r'[,;\s]+', text.strip())
         
         for part in parts:
@@ -2172,20 +3235,34 @@ class LottoApp(QWidget):
             
             # 범위 표기 체크 (예: 1-10)
             if '-' in part and not part.startswith('-'):
+                # 1-10-20 같은 잘못된 형식 체크
+                if part.count('-') > 1:
+                    errors.append(f"'{part}' 잘못된 범위 형식입니다")
+                    continue
+                    
                 range_match = re.match(r'^(\d+)-(\d+)$', part)
                 if range_match:
                     start, end = int(range_match.group(1)), int(range_match.group(2))
+                    
                     if start > end:
                         start, end = end, start  # 순서 정정
+                        
                     if start < 1 or end > 45:
                         errors.append(f"'{part}' 범위가 1-45를 벗어났습니다")
                     else:
                         for num in range(start, end + 1):
                             valid_nums.add(num)
-                    continue
+                else:
+                    errors.append(f"'{part}' 유효한 범위 형식이 아닙니다")
+                continue
             
             # 단일 숫자
             try:
+                # 숫자 외 문자가 섞여있는지 체크
+                if not part.isdigit():
+                     errors.append(f"'{part}'은(는) 숫자가 아닙니다")
+                     continue
+                     
                 num = int(part)
                 if 1 <= num <= 45:
                     valid_nums.add(num)
@@ -2274,15 +3351,30 @@ class LottoApp(QWidget):
         generated_count = 0
         max_retries = 1000
         
+        use_smart = self.chk_smart_gen.isChecked()
+        
         while generated_count < num_sets:
             retry_count = 0
             valid_set_found = False
             current_set = []
             
             while retry_count < max_retries:
-                temp_set = list(fixed_nums)
-                needed = 6 - len(temp_set)
-                temp_set.extend(random.sample(available_pool, needed))
+                if use_smart:
+                    # 스마트 생성 (전략: 핫 넘버 우선 + 균형)
+                    # 다양성을 위해 세트마다 전략을 조금씩 변경
+                    prefer_hot = (generated_count % 4 != 3)  # 4번 중 3번은 핫 넘버, 1번은 콜드 넘버
+                    
+                    temp_set = self.smart_generator.generate_smart_numbers(
+                        fixed_nums=fixed_nums,
+                        exclude_nums=exclude_nums,
+                        prefer_hot=prefer_hot,
+                        balance_mode=True
+                    )
+                else:
+                    # 일반 랜덤 생성
+                    temp_set = list(fixed_nums)
+                    needed = 6 - len(temp_set)
+                    temp_set.extend(random.sample(available_pool, needed))
                 
                 if check_consecutive and self.has_consecutive(temp_set, consecutive_limit):
                     retry_count += 1
@@ -2362,12 +3454,9 @@ class LottoApp(QWidget):
         """앱 종료 시 리소스 정리"""
         logger.info("Application closing...")
         
-        # API 워커 종료
-        if hasattr(self.winning_info_widget, 'api_worker'):
-            worker = self.winning_info_widget.api_worker
-            if worker and worker.isRunning():
-                worker.cancel()
-                worker.wait(1000)
+        # API 요청 취소
+        if hasattr(self.winning_info_widget, 'network_manager'):
+            self.winning_info_widget.network_manager.cancel()
         
         event.accept()
 
@@ -2375,12 +3464,27 @@ class LottoApp(QWidget):
 # ============================================================
 # 메인 엔트리 포인트
 # ============================================================
-def main():
-    app = QApplication(sys.argv)
-    app.setFont(QFont("Malgun Gothic", 10))
+def exception_hook(exctype, value, traceback):
+    """Global exception handler to ensure crashes are reported"""
+    logger.critical("Uncaught exception", exc_info=(exctype, value, traceback))
+    sys.__excepthook__(exctype, value, traceback)
     
-    ex = LottoApp()
-    ex.show()
+    # GUI가 이미 생성되었는지 확인
+    if QApplication.instance():
+        error_msg = f"{value}\n\n로그 파일을 확인해주세요."
+        QMessageBox.critical(None, "Critical Error", f"예기치 않은 오류가 발생했습니다:\n{error_msg}")
+
+def main():
+    sys.excepthook = exception_hook
+    
+    app = QApplication(sys.argv)
+    
+    # 폰트 설정
+    font = QFont("Malgun Gothic", 10)
+    app.setFont(font)
+    
+    window = LottoApp()
+    window.show()
     
     sys.exit(app.exec())
 
