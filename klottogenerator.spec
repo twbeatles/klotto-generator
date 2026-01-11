@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-Lotto Generator Pro v2.2 - PyInstaller Spec File (Onefile Mode)
+Lotto Generator Pro v2.3 - PyInstaller Spec File (Onefile Mode)
 빌드 명령어: pyinstaller klottogenerator.spec
 """
 
@@ -52,14 +52,16 @@ hidden_imports = [
     'qrcode',
     'PIL.ImageQt',
     'email',
+    'PyQt6.QtNetwork',
 ]
 
 a = Analysis(
-    ['klottogenerator.py'],
+    ['run_klotto.py'],
     pathex=[str(project_path)],
     binaries=[],
     datas=[],
     hiddenimports=hidden_imports,
+
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -74,12 +76,12 @@ a = Analysis(
 # Qt 관련 불필요 파일 제거
 def filter_binaries(binaries):
     exclude_patterns = [
-        'Qt6WebEngine', 'Qt6Designer', 'Qt6Quick', 'Qt6Qml',
-        'Qt6Network', 'Qt6Sql', 'Qt6Svg', 'Qt6Pdf',
+        'Qt6Quick', 'Qt6Qml',
+        'Qt6Sql', 'Qt6Svg', 'Qt6Pdf',
         'Qt6Multimedia', 'Qt6Sensors', 'Qt6Bluetooth',
         'Qt6SerialPort', 'Qt6Test', 'Qt6DBus',
         'opengl32sw', 'd3dcompiler',
-        'QtBluetooth', 'QtMultimedia', 'QtNetwork',
+        'QtBluetooth', 'QtMultimedia',
         'QtPositioning', 'QtQml', 'QtQuick', 'QtSensors',
         'QtWebEngine', 'QtWebSockets',
         'icudt', 'icuin', 'icuuc',  # ICU 라이브러리 (대용량)
