@@ -517,6 +517,23 @@ class FavoritesDialog(QDialog):
         copy_btn.clicked.connect(self._copy_selected)
         btn_layout.addWidget(copy_btn)
         
+        # QR 버튼
+        qr_btn = QPushButton("📱 QR")
+        qr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        qr_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['success']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: {t['success_light']}; color: {t['success']}; }}
+        """)
+        qr_btn.clicked.connect(self._show_selected_qr)
+        btn_layout.addWidget(qr_btn)
+        
         # 삭제 버튼
         delete_btn = QPushButton("🗑️ 삭제")
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -642,6 +659,19 @@ class FavoritesDialog(QDialog):
         else:
             QMessageBox.warning(self, "선택 필요", "삭제할 항목을 선택하세요.")
 
+    def _show_selected_qr(self):
+        """선택된 번호의 QR 코드 표시"""
+        row = self.list_widget.currentRow()
+        if row >= 0:
+            item = self.list_widget.item(row)
+            numbers = item.data(Qt.ItemDataRole.UserRole)
+            dialog = QRCodeDialog(numbers, self)
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "선택 필요", "QR 코드를 볼 항목을 선택하세요.")
+
+
+from klotto.net.client import LottoNetworkManager
 
 # ============================================================
 # 실제 당첨 번호 통계 다이얼로그
@@ -652,6 +682,10 @@ class RealStatsDialog(QDialog):
     def __init__(self, stats_manager: WinningStatsManager, parent=None):
         super().__init__(parent)
         self.stats_manager = stats_manager
+        self.network_manager = LottoNetworkManager(self)
+        self.network_manager.dataLoaded.connect(self._on_data_received)
+        self.network_manager.errorOccurred.connect(self._on_error)
+        
         self.setWindowTitle("📈 실제 당첨 번호 통계")
         self.setMinimumSize(600, 550)
         self._setup_ui()
@@ -663,6 +697,39 @@ class RealStatsDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         
         t = ThemeManager.get_theme()
+        
+        # 헤더 & 동기화 버튼
+        header_layout = QHBoxLayout()
+        header_label = QLabel("📊 당첨 번호 통계")
+        header_label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {t['text_primary']};")
+        header_layout.addWidget(header_label)
+        
+        header_layout.addStretch()
+        
+        self.sync_btn = QPushButton("🔄 최근 5회 동기화")
+        self.sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sync_btn.clicked.connect(self._sync_recent_data)
+        self.sync_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {t['accent']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: {t['accent_hover']}; }}
+        """)
+        header_layout.addWidget(self.sync_btn)
+        layout.addLayout(header_layout)
+        
+        # 진행 상태 표시 줄
+        self.progress_label = QLabel("")
+        self.progress_label.setStyleSheet(f"color: {t['accent']}; font-weight: bold;")
+        self.progress_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.progress_label.setVisible(False)
+        layout.addWidget(self.progress_label)
         
         # 통계 데이터 가져오기
         analysis = self.stats_manager.get_frequency_analysis()
@@ -817,6 +884,58 @@ class RealStatsDialog(QDialog):
                 background-color: {t['accent_hover']};
             }}
         """)
+    
+    def _sync_recent_data(self):
+        """최신 데이터 동기화"""
+        # 최신 회차 추정 (LottoApp/WinningInfoWidget 로직과 동일)
+        base_date = datetime.date(2002, 12, 7)
+        today = datetime.date.today()
+        days_diff = (today - base_date).days
+        estimated_draw = days_diff // 7 + 1
+        now = datetime.datetime.now()
+        if today.weekday() == 5 and now.hour < 21:
+            estimated_draw -= 1
+            
+        start_draw = max(1, estimated_draw - 4) # 최근 5개
+        draws = list(range(start_draw, estimated_draw + 1))
+        
+        if not draws:
+            return
+            
+        self.sync_btn.setEnabled(False)
+        self.progress_label.setText("데이터 동기화 중...")
+        self.progress_label.setVisible(True)
+        
+        self.network_manager.fetch_draws(draws)
+
+    def _on_data_received(self, data: dict):
+        """데이터 수신 시 처리"""
+        try:
+            draw_no = int(data.get('drwNo', 0))
+            if draw_no > 0:
+                numbers = [
+                    int(data.get('drwtNo1')), int(data.get('drwtNo2')),
+                    int(data.get('drwtNo3')), int(data.get('drwtNo4')),
+                    int(data.get('drwtNo5')), int(data.get('drwtNo6'))
+                ]
+                bonus = int(data.get('bnusNo'))
+                
+                self.stats_manager.add_winning_data(draw_no, numbers, bonus)
+                self.progress_label.setText(f"{draw_no}회차 저장 완료")
+                
+                # UI 새로고침 효과를 위해... 다이얼로그를 닫고 다시 열라고 안내하거나
+                # 혹은 그냥 저장되었다고만 표시
+                
+        except Exception as e:
+            logger.error(f"Sync error: {e}")
+
+    def _on_error(self, msg: str):
+        """에러 발생 시"""
+        self.progress_label.setText(f"오류: {msg}")
+        # 오류가 나도 계속 진행될 수 있으므로 버튼은 활성화 상태로 두거나, 
+        # 작업이 완전히 끝났음을 알 수 있을 때 활성화해야 함.
+        # 현재 구조상 마지막인지 알기 어려우니 3초 후 버튼 활성화
+        QTimer.singleShot(3000, lambda: self.sync_btn.setEnabled(True))
 
 
 # ============================================================
@@ -1133,7 +1252,7 @@ class ExportImportDialog(QDialog):
         import_target_layout = QHBoxLayout()
         import_target_layout.addWidget(QLabel("가져오기 대상:"))
         self.import_combo = QComboBox()
-        self.import_combo.addItems(["즐겨찾기", "히스토리"])
+        self.import_combo.addItems(["즐겨찾기", "히스토리", "당첨 통계"])
         import_target_layout.addWidget(self.import_combo)
         import_target_layout.addStretch()
         import_layout.addLayout(import_target_layout)
@@ -1224,12 +1343,20 @@ class ExportImportDialog(QDialog):
                 if 'numbers' in item:
                     if self.favorites_manager.add(item['numbers'], item.get('memo', '')):
                         imported_count += 1
-        else:
+        elif target_idx == 1:
             # 히스토리에 추가
             for item in data:
                 if 'numbers' in item:
                     if self.history_manager.add(item['numbers']):
                         imported_count += 1
+        else:
+            # 당첨 통계에 추가
+            for item in data:
+                if 'draw_no' in item and 'numbers' in item and 'bonus' in item:
+                    self.stats_manager.add_winning_data(
+                        item['draw_no'], item['numbers'], item['bonus']
+                    )
+                    imported_count += 1
         
         QMessageBox.information(
             self, "완료", 

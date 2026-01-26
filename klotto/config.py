@@ -5,7 +5,7 @@ from pathlib import Path
 # ============================================================
 APP_CONFIG = {
     'APP_NAME': 'Lotto 6/45 Generator Pro',
-    'VERSION': '2.2',
+    'VERSION': '2.4',
     'WINDOW_SIZE': (680, 980),
     'FAVORITES_FILE': Path.home() / ".lotto_generator" / "favorites.json",
     'HISTORY_FILE': Path.home() / ".lotto_generator" / "history.json",

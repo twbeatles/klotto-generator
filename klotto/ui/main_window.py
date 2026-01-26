@@ -227,6 +227,7 @@ class LottoApp(QWidget):
             ("📈 당첨통계", self._show_real_stats),
             ("🎯 당첨확인", self._show_winning_check),
             ("💾 데이터관리", self._show_data_manager),
+            ("📷 QR 스캔", self._show_qr_scanner),
         ]
         
         for text, callback in functions:
@@ -467,6 +468,69 @@ class LottoApp(QWidget):
     def _show_data_manager(self):
         dialog = ExportImportDialog(self.favorites_manager, self.history_manager, self.stats_manager, self)
         dialog.exec()
+
+    def _show_qr_scanner(self):
+        from klotto.ui.scanner import QRCodeScannerDialog
+        dialog = QRCodeScannerDialog(self)
+        if dialog.exec():
+            data = dialog.scanned_data
+            if not data:
+                return
+                
+            draw_no = data['draw_no']
+            scanned_sets = data['sets']
+            
+            # Check if we have winning data for this draw
+            winning_data = self.stats_manager.winning_data
+            target_draw = next((d for d in winning_data if d['draw_no'] == draw_no), None)
+            
+            if not target_draw:
+                # Try fetching if not found (optional, requires async, skip for now or just warn)
+                QMessageBox.warning(self, "확인 불가", 
+                                  f"{draw_no}회차의 당첨 데이터가 저장되어 있지 않습니다.\n"
+                                  "당첨 통계 > 데이터 동기화를 먼저 진행해주세요.")
+                return
+                
+            winning_nums = set(target_draw['numbers'])
+            bonus = target_draw['bonus']
+            
+            # Formulate result message
+            msg = f"<h2>{draw_no}회 당첨 결과 확인</h2>"
+            msg += f"<p>당첨번호: <b>{', '.join(map(str, sorted(winning_nums)))} + {bonus}</b></p><hr>"
+            
+            found_win = False
+            for i, nums in enumerate(scanned_sets):
+                my_nums = set(nums)
+                matched = my_nums & winning_nums
+                match_count = len(matched)
+                is_bonus = bonus in my_nums
+                
+                rank = "낙첨"
+                color = "gray"
+                if match_count == 6:
+                    rank = "1등"
+                    color = "red"
+                    found_win = True
+                elif match_count == 5 and is_bonus:
+                    rank = "2등"
+                    color = "orange"
+                    found_win = True
+                elif match_count == 5:
+                    rank = "3등"
+                    color = "orange"
+                    found_win = True
+                elif match_count == 4:
+                    rank = "4등"
+                    color = "green"
+                    found_win = True
+                elif match_count == 3:
+                    rank = "5등"
+                    color = "blue"
+                    found_win = True
+                    
+                msg += f"<p>#{i+1}: {', '.join(map(str, nums))} - <b style='color:{color}'>{rank}</b> (일치: {match_count})</p>"
+            
+            QMessageBox.information(self, "QR 스캔 결과", msg)
         
     def closeEvent(self, event: QCloseEvent):
         """종료 시 처리"""

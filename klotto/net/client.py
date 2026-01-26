@@ -13,9 +13,9 @@ class LottoApiWorker(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, draw_no: int):
+    def __init__(self, draw_nos: list):
         super().__init__()
-        self.draw_no = draw_no
+        self.draw_nos = draw_nos
         self._is_cancelled = False
     
     def cancel(self):
@@ -61,53 +61,59 @@ class LottoApiWorker(QThread):
         return date_str
     
     def run(self):
-        try:
+        total = len(self.draw_nos)
+        for i, draw_no in enumerate(self.draw_nos):
             if self._is_cancelled:
                 return
-                
-            url = DHLOTTERY_API_URL.format(self.draw_no)
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://www.dhlottery.co.kr/lt645/result',
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-                'X-Requested-With': 'XMLHttpRequest',
-            })
             
-            logger.info(f"Requesting draw #{self.draw_no} from new API")
-            
-            with urllib.request.urlopen(req, timeout=APP_CONFIG['API_TIMEOUT']) as response:
-                raw_data = response.read().decode('utf-8')
+            # 다수의 요청 시 약간의 딜레이 (서버 부하 방지)
+            if i > 0:
+                self.msleep(200)
                 
-                if self._is_cancelled:
-                    return
+            try:
+                url = DHLOTTERY_API_URL.format(draw_no)
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://www.dhlottery.co.kr/lt645/result',
+                    'Accept': 'application/json, text/javascript, */*; q=0.01',
+                    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'X-Requested-With': 'XMLHttpRequest',
+                })
                 
-                # 응답이 JSON인지 확인
-                if not raw_data.strip().startswith('{'):
-                    logger.error(f"Response is not JSON. First 200 chars: {raw_data[:200]}")
-                    self.error.emit("서버 응답이 올바르지 않습니다. 잠시 후 다시 시도해주세요.")
-                    return
+                logger.info(f"Requesting draw #{draw_no} from new API")
+                
+                with urllib.request.urlopen(req, timeout=APP_CONFIG['API_TIMEOUT']) as response:
+                    raw_data = response.read().decode('utf-8')
                     
-                new_data = json.loads(raw_data)
-                
-                # 새 형식을 기존 형식으로 변환
-                converted_data = self._convert_new_format_to_old(new_data)
-                
-                if converted_data and converted_data.get('drwNo'):
-                    logger.info(f"Successfully fetched draw #{self.draw_no}")
-                    self.finished.emit(converted_data)
-                else:
-                    self.error.emit("해당 회차의 정보를 찾을 수 없습니다.")
+                    if self._is_cancelled:
+                        return
                     
-        except urllib.error.URLError as e:
-            logger.error(f"Network error: {e}")
-            self.error.emit("네트워크 오류가 발생했습니다.")
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}")
-            self.error.emit("데이터 파싱 오류")
-        except Exception as e:
-            logger.error(f"Unknown error: {e}")
-            self.error.emit(f"알 수 없는 오류: {str(e)}")
+                    # 응답이 JSON인지 확인
+                    if not raw_data.strip().startswith('{'):
+                        logger.error(f"Response is not JSON. First 200 chars: {raw_data[:200]}")
+                        self.error.emit(f"{draw_no}회차: 서버 응답 오류")
+                        continue
+                        
+                    new_data = json.loads(raw_data)
+                    
+                    # 새 형식을 기존 형식으로 변환
+                    converted_data = self._convert_new_format_to_old(new_data)
+                    
+                    if converted_data and converted_data.get('drwNo'):
+                        logger.info(f"Successfully fetched draw #{draw_no}")
+                        self.finished.emit(converted_data)
+                    else:
+                        self.error.emit(f"{draw_no}회차 정보를 찾을 수 없습니다.")
+                        
+            except urllib.error.URLError as e:
+                logger.error(f"Network error for #{draw_no}: {e}")
+                self.error.emit(f"{draw_no}회차: 네트워크 오류")
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error for #{draw_no}: {e}")
+                self.error.emit(f"{draw_no}회차: 데이터 파싱 오류")
+            except Exception as e:
+                logger.error(f"Unknown error for #{draw_no}: {e}")
+                self.error.emit(f"{draw_no}회차: 알 수 없는 오류")
 
 
 # ============================================================
@@ -125,14 +131,18 @@ class LottoNetworkManager(QObject):
         self._current_worker: Optional[LottoApiWorker] = None
         
     def fetch_draw(self, draw_no: int):
-        """회차 정보 요청"""
+        """단일 회차 정보 요청"""
+        self.fetch_draws([draw_no])
+        
+    def fetch_draws(self, draw_nos: list):
+        """여러 회차 정보 요청 (순차적)"""
         # 기존 워커가 실행 중이면 취소
         if self._current_worker and self._current_worker.isRunning():
             self._current_worker.cancel()
             self._current_worker.wait(1000)  # 최대 1초 대기
             
         # 새 워커 생성
-        self._current_worker = LottoApiWorker(draw_no)
+        self._current_worker = LottoApiWorker(draw_nos)
         
         # 워커 시그널을 매니저 시그널로 연결
         self._current_worker.finished.connect(self.dataLoaded.emit)

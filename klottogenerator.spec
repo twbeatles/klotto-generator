@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-Lotto Generator Pro v2.3 - PyInstaller Spec File (Onefile Mode)
+Lotto Generator Pro v2.4 - PyInstaller Spec File (Onefile Mode)
 빌드 명령어: pyinstaller klottogenerator.spec
 """
 
