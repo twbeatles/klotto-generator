@@ -40,7 +40,17 @@ def main():
     window = LottoApp()
     window.show()
     
+    # 백그라운드에서 최신 당첨 정보 동기화 시작
+    try:
+        from .core.sync_service import start_background_sync
+        window._sync_worker = start_background_sync(window.stats_manager)
+        if window._sync_worker:
+            logger.info("Background sync started")
+    except Exception as e:
+        logger.warning(f"Background sync failed to start: {e}")
+    
     sys.exit(app.exec())
 
 if __name__ == '__main__':
     main()
+

@@ -41,7 +41,8 @@ exclude_modules = [
     # 기타
     'html', 'http.server', 'xmlrpc',
     'multiprocessing', 'concurrent', 'asyncio',
-    'sqlite3', 'bz2', 'lzma',
+    'bz2', 'lzma',
+    # 'sqlite3' - 이제 필요함 (로또 히스토리 DB)
 ]
 
 # 필수 hidden imports
@@ -59,7 +60,10 @@ a = Analysis(
     ['run_klotto.py'],
     pathex=[str(project_path)],
     binaries=[],
-    datas=[],
+    # 로또 히스토리 DB 포함
+    datas=[
+        (str(project_path / 'data' / 'lotto_history.db'), 'data'),
+    ] if (project_path / 'data' / 'lotto_history.db').exists() else [],
     hiddenimports=hidden_imports,
 
     hookspath=[],

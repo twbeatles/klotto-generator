@@ -1,15 +1,53 @@
 from pathlib import Path
+import sys
+
+# ============================================================
+# PyInstaller 번들 경로 처리
+# ============================================================
+def _get_base_path() -> Path:
+    """PyInstaller 번들 또는 개발 환경의 기본 경로 반환"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 번들 (onefile 모드)
+        return Path(sys._MEIPASS)
+    else:
+        # 개발 환경
+        return Path(__file__).resolve().parent.parent
+
+def _get_db_path() -> Path:
+    """DB 경로 결정: 번들에 있으면 사용자 데이터 폴더로 복사 후 사용"""
+    base = _get_base_path()
+    bundled_db = base / "data" / "lotto_history.db"
+    user_db = Path.home() / ".lotto_generator" / "lotto_history.db"
+    
+    # 번들에 DB가 있고 사용자 폴더에 없으면 복사
+    if bundled_db.exists() and not user_db.exists():
+        try:
+            user_db.parent.mkdir(parents=True, exist_ok=True)
+            import shutil
+            shutil.copy2(bundled_db, user_db)
+        except Exception:
+            pass
+    
+    # 사용자 폴더의 DB 우선, 없으면 번들/개발 경로
+    if user_db.exists():
+        return user_db
+    elif bundled_db.exists():
+        return bundled_db
+    else:
+        # 개발 환경에서 data 폴더 경로
+        return Path(__file__).resolve().parent.parent / "data" / "lotto_history.db"
 
 # ============================================================
 # 상수 정의
 # ============================================================
 APP_CONFIG = {
     'APP_NAME': 'Lotto 6/45 Generator Pro',
-    'VERSION': '2.4',
+    'VERSION': '2.5',
     'WINDOW_SIZE': (680, 980),
     'FAVORITES_FILE': Path.home() / ".lotto_generator" / "favorites.json",
     'HISTORY_FILE': Path.home() / ".lotto_generator" / "history.json",
     'WINNING_STATS_FILE': Path.home() / ".lotto_generator" / "winning_stats.json",
+    'LOTTO_HISTORY_DB': _get_db_path(),
     'MAX_SETS': 20,
     'MAX_FIXED_NUMS': 5,
     'OPTIMAL_SUM_RANGE': (100, 175),

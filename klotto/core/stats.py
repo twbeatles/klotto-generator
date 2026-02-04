@@ -1,6 +1,7 @@
 import json
 import datetime
 import os
+import sqlite3
 from typing import List, Dict
 from klotto.config import APP_CONFIG
 from klotto.utils import logger
@@ -9,26 +10,70 @@ from klotto.utils import logger
 # 역대 당첨 번호 통계 관리
 # ============================================================
 class WinningStatsManager:
-    """역대 당첨 번호 통계 관리"""
+    """역대 당첨 번호 통계 관리 (SQLite DB 우선, JSON 폴백)"""
     
     def __init__(self):
         self.stats_file = APP_CONFIG['WINNING_STATS_FILE']
+        self.db_path = APP_CONFIG.get('LOTTO_HISTORY_DB')
         self.winning_data: List[Dict] = []
         self._load()
     
     def _load(self):
-        """파일에서 통계 데이터 로드"""
+        """데이터 로드 - DB 우선, JSON 폴백"""
+        # 먼저 SQLite DB에서 로드 시도
+        if self.db_path and self.db_path.exists():
+            if self._load_from_db():
+                return
+        
+        # DB가 없으면 JSON 파일에서 로드
+        self._load_from_json()
+    
+    def _load_from_db(self) -> bool:
+        """SQLite DB에서 데이터 로드"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT draw_no, date, num1, num2, num3, num4, num5, num6, bonus 
+                FROM draws 
+                ORDER BY draw_no DESC
+            ''')
+            rows = cursor.fetchall()
+            conn.close()
+            
+            if not rows:
+                return False
+            
+            self.winning_data = []
+            for row in rows:
+                self.winning_data.append({
+                    'draw_no': row[0],
+                    'date': row[1],
+                    'numbers': sorted([row[2], row[3], row[4], row[5], row[6], row[7]]),
+                    'bonus': row[8]
+                })
+            
+            logger.info(f"Loaded {len(self.winning_data)} winning records from DB")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load from DB: {e}")
+            return False
+    
+    def _load_from_json(self):
+        """JSON 파일에서 통계 데이터 로드 (폴백)"""
         try:
             if self.stats_file and self.stats_file.exists():
                 with open(self.stats_file, 'r', encoding='utf-8') as f:
                     self.winning_data = json.load(f)
-                logger.info(f"Loaded {len(self.winning_data)} winning records")
+                logger.info(f"Loaded {len(self.winning_data)} winning records from JSON")
         except Exception as e:
             logger.error(f"Failed to load winning stats: {e}")
             self.winning_data = []
     
     def _save(self):
-        """통계 데이터 저장 (Atomic)"""
+        """통계 데이터 저장 (JSON - 캐시용)"""
         if not self.stats_file:
             return
 
@@ -51,7 +96,7 @@ class WinningStatsManager:
             except: pass
     
     def add_winning_data(self, draw_no: int, numbers: List[int], bonus: int):
-        """당첨 데이터 추가"""
+        """당첨 데이터 추가 (API 동기화용)"""
         # 중복 체크
         if any(d['draw_no'] == draw_no for d in self.winning_data):
             return
@@ -66,11 +111,17 @@ class WinningStatsManager:
         # 회차순 정렬
         self.winning_data.sort(key=lambda x: x['draw_no'], reverse=True)
         
-        # 캐시 크기 제한
-        if len(self.winning_data) > APP_CONFIG['WINNING_STATS_CACHE_SIZE']:
-            self.winning_data = self.winning_data[:APP_CONFIG['WINNING_STATS_CACHE_SIZE']]
+        # JSON 캐시 크기 제한 (DB가 없을 때만 적용)
+        if not (self.db_path and self.db_path.exists()):
+            if len(self.winning_data) > APP_CONFIG['WINNING_STATS_CACHE_SIZE']:
+                self.winning_data = self.winning_data[:APP_CONFIG['WINNING_STATS_CACHE_SIZE']]
         
         self._save()
+    
+    def reload_from_db(self):
+        """DB에서 데이터 다시 로드 (수동 새로고침용)"""
+        if self.db_path and self.db_path.exists():
+            self._load_from_db()
     
     def get_frequency_analysis(self) -> Dict:
         """번호별 출현 빈도 분석"""
@@ -135,3 +186,4 @@ class WinningStatsManager:
     def get_recent_trend(self, count: int = 10) -> List[Dict]:
         """최근 N회차 트렌드"""
         return self.winning_data[:count]
+
