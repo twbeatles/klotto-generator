@@ -17,7 +17,7 @@ project_path = Path(SPECPATH)
 exclude_modules = [
     # 과학/데이터 라이브러리
     'matplotlib', 'numpy', 'pandas', 'scipy', 'sklearn',
-    'cv2', 'opencv',
+    'cv2', 'opencv', 'pyzbar',
     
     # 테스트/개발 도구
     'test', 'tests', 'unittest', 'pytest', 'doctest',

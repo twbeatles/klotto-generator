@@ -1131,7 +1131,7 @@ class WinningCheckDialog(QDialog):
                 nums_layout.addWidget(QLabel("내 번호:"))
                 for num in sorted(my_numbers):
                     highlighted = num in matched
-                    ball = LottoBall(num, size=28, highlighted=highlighted)
+                    ball = LottoBall(num, size=34, highlighted=highlighted)
                     nums_layout.addWidget(ball)
                 nums_layout.addStretch()
                 row_layout.addLayout(nums_layout)

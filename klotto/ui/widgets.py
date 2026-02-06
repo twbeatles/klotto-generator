@@ -217,25 +217,6 @@ class ResultRow(QWidget):
         copy_btn.clicked.connect(self._copy_numbers)
         layout.addWidget(copy_btn)
         
-        # QR 버튼
-        qr_btn = QPushButton("📱")
-        qr_btn.setFixedSize(28, 28)
-        qr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        qr_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: none;
-                font-size: 14px;
-                border-radius: 14px;
-            }}
-            QPushButton:hover {{
-                background: {t['bg_tertiary']};
-            }}
-        """)
-        qr_btn.setToolTip("QR 코드 보기")
-        qr_btn.clicked.connect(self._show_qr)
-        layout.addWidget(qr_btn)
-        
         # 즐겨찾기 버튼
         fav_btn = QPushButton("☆")
         fav_btn.setFixedSize(28, 28)
@@ -265,12 +246,6 @@ class ResultRow(QWidget):
         nums_str = " ".join(f"{n:02d}" for n in self.numbers)
         QApplication.clipboard().setText(nums_str)
         self.copyClicked.emit(self.numbers)
-    
-    def _show_qr(self):
-        """QR 코드 다이얼로그 표시"""
-        from .dialogs import QRCodeDialog
-        dialog = QRCodeDialog(self.numbers, self)
-        dialog.exec()
     
     def _apply_theme(self):
         """테마 적용 - 홀수/짝수 행 배경색 차별화"""
