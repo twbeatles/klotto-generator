@@ -129,6 +129,17 @@ class LottoNetworkManager(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_worker: Optional[LottoApiWorker] = None
+
+    def _disconnect_worker_signals(self, worker: LottoApiWorker):
+        try:
+            worker.finished.disconnect(self.dataLoaded.emit)
+        except (TypeError, RuntimeError):
+            pass
+
+        try:
+            worker.error.disconnect(self.errorOccurred.emit)
+        except (TypeError, RuntimeError):
+            pass
         
     def fetch_draw(self, draw_no: int):
         """단일 회차 정보 요청"""
@@ -138,9 +149,11 @@ class LottoNetworkManager(QObject):
         """여러 회차 정보 요청 (순차적)"""
         # 기존 워커가 실행 중이면 취소
         if self._current_worker and self._current_worker.isRunning():
+            self._disconnect_worker_signals(self._current_worker)
             self._current_worker.cancel()
-            self._current_worker.wait(1000)  # 최대 1초 대기
-            
+        elif self._current_worker:
+            self._disconnect_worker_signals(self._current_worker)
+             
         # 새 워커 생성
         self._current_worker = LottoApiWorker(draw_nos)
         
@@ -152,6 +165,10 @@ class LottoNetworkManager(QObject):
         
     def cancel(self):
         """요청 취소"""
-        if self._current_worker and self._current_worker.isRunning():
+        if not self._current_worker:
+            return
+
+        self._disconnect_worker_signals(self._current_worker)
+        if self._current_worker.isRunning():
             self._current_worker.cancel()
-            self._current_worker = None
+        self._current_worker = None

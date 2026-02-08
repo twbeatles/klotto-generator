@@ -6,7 +6,7 @@ import sqlite3
 import urllib.request
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, cast
 from PyQt6.QtCore import QThread, pyqtSignal
 from klotto.config import APP_CONFIG
 from klotto.utils import logger
@@ -30,13 +30,15 @@ class LottoSyncWorker(QThread):
     def _get_last_draw_no(self) -> int:
         """DB에서 마지막 회차 번호 조회"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT MAX(draw_no) FROM draws')
-            result = cursor.fetchone()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT MAX(draw_no) FROM draws')
+                result = cursor.fetchone()
             return result[0] if result[0] else 0
-        except:
+        except sqlite3.OperationalError:
+            return 0
+        except Exception as e:
+            logger.error(f"Failed to read last draw number: {e}")
             return 0
     
     def _estimate_current_draw(self) -> int:
@@ -53,7 +55,7 @@ class LottoSyncWorker(QThread):
             estimated -= 1
         return estimated
     
-    def _fetch_draw(self, draw_no: int) -> Optional[dict]:
+    def _fetch_draw(self, draw_no: int) -> Optional[Dict[str, Any]]:
         """API에서 회차 정보 가져오기"""
         try:
             url = self.API_URL.format(draw_no)
@@ -94,40 +96,39 @@ class LottoSyncWorker(QThread):
             logger.error(f"Fetch error for draw {draw_no}: {e}")
             return None
     
-    def _save_draw(self, data: dict) -> bool:
+    def _save_draw(self, data: Dict[str, Any]) -> bool:
         """DB에 회차 저장"""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 테이블 생성 (없으면)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS draws (
-                    draw_no INTEGER PRIMARY KEY,
-                    date TEXT,
-                    num1 INTEGER, num2 INTEGER, num3 INTEGER,
-                    num4 INTEGER, num5 INTEGER, num6 INTEGER,
-                    bonus INTEGER,
-                    prize_amount INTEGER,
-                    winners_count INTEGER,
-                    total_sales INTEGER
-                )
-            ''')
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO draws 
-                (draw_no, date, num1, num2, num3, num4, num5, num6, bonus, prize_amount, winners_count, total_sales)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                data['draw_no'], data['date'],
-                data['num1'], data['num2'], data['num3'],
-                data['num4'], data['num5'], data['num6'],
-                data['bonus'], data['prize_amount'],
-                data['winners_count'], data['total_sales']
-            ))
-            
-            conn.commit()
-            conn.close()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+
+                # 테이블 생성 (없으면)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS draws (
+                        draw_no INTEGER PRIMARY KEY,
+                        date TEXT,
+                        num1 INTEGER, num2 INTEGER, num3 INTEGER,
+                        num4 INTEGER, num5 INTEGER, num6 INTEGER,
+                        bonus INTEGER,
+                        prize_amount INTEGER,
+                        winners_count INTEGER,
+                        total_sales INTEGER
+                    )
+                ''')
+
+                cursor.execute('''
+                    INSERT OR REPLACE INTO draws 
+                    (draw_no, date, num1, num2, num3, num4, num5, num6, bonus, prize_amount, winners_count, total_sales)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    data['draw_no'], data['date'],
+                    data['num1'], data['num2'], data['num3'],
+                    data['num4'], data['num5'], data['num6'],
+                    data['bonus'], data['prize_amount'],
+                    data['winners_count'], data['total_sales']
+                ))
+
+                conn.commit()
             return True
         except Exception as e:
             logger.error(f"Save error: {e}")
@@ -169,7 +170,7 @@ class LottoSyncWorker(QThread):
 
 def start_background_sync(stats_manager=None) -> Optional[LottoSyncWorker]:
     """백그라운드 동기화 시작 (호출자가 워커 참조 유지 필요)"""
-    db_path = APP_CONFIG.get('LOTTO_HISTORY_DB')
+    db_path = cast(Path, APP_CONFIG.get('LOTTO_HISTORY_DB'))
     if not db_path:
         return None
     

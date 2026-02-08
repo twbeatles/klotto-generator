@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QMessageBox, QGroupBox, QListWidget, QListWidgetItem,
@@ -685,6 +685,7 @@ class RealStatsDialog(QDialog):
         self.network_manager = LottoNetworkManager(self)
         self.network_manager.dataLoaded.connect(self._on_data_received)
         self.network_manager.errorOccurred.connect(self._on_error)
+        self._pending_sync_count = 0
         
         self.setWindowTitle("📈 실제 당첨 번호 통계")
         self.setMinimumSize(600, 550)
@@ -905,22 +906,44 @@ class RealStatsDialog(QDialog):
         self.sync_btn.setEnabled(False)
         self.progress_label.setText("데이터 동기화 중...")
         self.progress_label.setVisible(True)
+        self._pending_sync_count = len(draws)
         
         self.network_manager.fetch_draws(draws)
 
-    def _on_data_received(self, data: dict):
+    def _complete_sync_step(self):
+        if self._pending_sync_count > 0:
+            self._pending_sync_count -= 1
+
+        if self._pending_sync_count <= 0:
+            self.sync_btn.setEnabled(True)
+            if not self.progress_label.text().startswith("오류:"):
+                self.progress_label.setText("동기화 완료")
+
+    @staticmethod
+    def _safe_int(value, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _on_data_received(self, data):
         """데이터 수신 시 처리"""
         try:
-            draw_no = int(data.get('drwNo', 0))
+            draw_no = self._safe_int(data.get('drwNo'))
             if draw_no > 0:
                 numbers = [
-                    int(data.get('drwtNo1')), int(data.get('drwtNo2')),
-                    int(data.get('drwtNo3')), int(data.get('drwtNo4')),
-                    int(data.get('drwtNo5')), int(data.get('drwtNo6'))
+                    self._safe_int(data.get('drwtNo1')), self._safe_int(data.get('drwtNo2')),
+                    self._safe_int(data.get('drwtNo3')), self._safe_int(data.get('drwtNo4')),
+                    self._safe_int(data.get('drwtNo5')), self._safe_int(data.get('drwtNo6'))
                 ]
-                bonus = int(data.get('bnusNo'))
+                bonus = self._safe_int(data.get('bnusNo'))
+                draw_date_raw = data.get('drwNoDate')
+                draw_date = draw_date_raw if isinstance(draw_date_raw, str) else None
+
+                if any(n <= 0 for n in numbers) or bonus <= 0:
+                    return
                 
-                self.stats_manager.add_winning_data(draw_no, numbers, bonus)
+                self.stats_manager.add_winning_data(draw_no, numbers, bonus, draw_date=draw_date)
                 self.progress_label.setText(f"{draw_no}회차 저장 완료")
                 
                 # UI 새로고침 효과를 위해... 다이얼로그를 닫고 다시 열라고 안내하거나
@@ -928,14 +951,13 @@ class RealStatsDialog(QDialog):
                 
         except Exception as e:
             logger.error(f"Sync error: {e}")
+        finally:
+            self._complete_sync_step()
 
     def _on_error(self, msg: str):
         """에러 발생 시"""
         self.progress_label.setText(f"오류: {msg}")
-        # 오류가 나도 계속 진행될 수 있으므로 버튼은 활성화 상태로 두거나, 
-        # 작업이 완전히 끝났음을 알 수 있을 때 활성화해야 함.
-        # 현재 구조상 마지막인지 알기 어려우니 3초 후 버튼 활성화
-        QTimer.singleShot(3000, lambda: self.sync_btn.setEnabled(True))
+        self._complete_sync_step()
 
 
 # ============================================================
@@ -1270,6 +1292,39 @@ class ExportImportDialog(QDialog):
         close_btn.setMinimumHeight(40)
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
+
+    @staticmethod
+    def _normalize_numbers(value: Any) -> Optional[List[int]]:
+        if not isinstance(value, (list, tuple)):
+            return None
+
+        try:
+            numbers = sorted(int(n) for n in value)
+        except (TypeError, ValueError):
+            return None
+
+        if len(numbers) != 6 or len(set(numbers)) != 6:
+            return None
+        if any(n < 1 or n > 45 for n in numbers):
+            return None
+        return numbers
+
+    @staticmethod
+    def _normalize_positive_int(value: Any) -> Optional[int]:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _normalize_bonus(value: Any, numbers: List[int]) -> Optional[int]:
+        bonus = ExportImportDialog._normalize_positive_int(value)
+        if bonus is None:
+            return None
+        if bonus < 1 or bonus > 45 or bonus in numbers:
+            return None
+        return bonus
     
     def _export_data(self):
         data_type_idx = self.data_combo.currentIndex()
@@ -1333,6 +1388,10 @@ class ExportImportDialog(QDialog):
         if data is None:
             QMessageBox.warning(self, "오류", "파일을 읽는데 실패했습니다.")
             return
+
+        if not isinstance(data, list):
+            QMessageBox.warning(self, "오류", "올바른 JSON 배열 형식이 아닙니다.")
+            return
         
         target_idx = self.import_combo.currentIndex()
         imported_count = 0
@@ -1340,23 +1399,49 @@ class ExportImportDialog(QDialog):
         if target_idx == 0:
             # 즐겨찾기에 추가
             for item in data:
-                if 'numbers' in item:
-                    if self.favorites_manager.add(item['numbers'], item.get('memo', '')):
-                        imported_count += 1
+                if not isinstance(item, dict):
+                    continue
+                numbers = self._normalize_numbers(item.get('numbers'))
+                if not numbers:
+                    continue
+                memo = item.get('memo', '')
+                if not isinstance(memo, str):
+                    memo = str(memo)
+                if self.favorites_manager.add(numbers, memo):
+                    imported_count += 1
         elif target_idx == 1:
             # 히스토리에 추가
             for item in data:
-                if 'numbers' in item:
-                    if self.history_manager.add(item['numbers']):
-                        imported_count += 1
+                if not isinstance(item, dict):
+                    continue
+                numbers = self._normalize_numbers(item.get('numbers'))
+                if not numbers:
+                    continue
+                if self.history_manager.add(numbers):
+                    imported_count += 1
         else:
             # 당첨 통계에 추가
+            existing_draws = {
+                d.get('draw_no') for d in self.stats_manager.winning_data if isinstance(d, dict)
+            }
             for item in data:
-                if 'draw_no' in item and 'numbers' in item and 'bonus' in item:
-                    self.stats_manager.add_winning_data(
-                        item['draw_no'], item['numbers'], item['bonus']
-                    )
-                    imported_count += 1
+                if not isinstance(item, dict):
+                    continue
+
+                draw_no = self._normalize_positive_int(item.get('draw_no'))
+                numbers = self._normalize_numbers(item.get('numbers'))
+                bonus = self._normalize_bonus(item.get('bonus'), numbers) if numbers else None
+                draw_date = item.get('date')
+                draw_date_value = draw_date if isinstance(draw_date, str) else None
+
+                if draw_no is None or numbers is None or bonus is None:
+                    continue
+                if draw_no in existing_draws:
+                    continue
+
+                self.stats_manager.add_winning_data(draw_no, numbers, bonus, draw_date=draw_date_value)
+                existing_draws.add(draw_no)
+                imported_count += 1
         
         QMessageBox.information(
             self, "완료", 

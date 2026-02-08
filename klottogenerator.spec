@@ -9,6 +9,13 @@ from pathlib import Path
 
 # 프로젝트 경로
 project_path = Path(SPECPATH)
+is_windows = sys.platform.startswith('win')
+
+# NOTE:
+# 일부 Windows 환경에서 dist/LottoGeneratorPro.exe 경로에 대한 쓰기 권한 충돌이 발생해
+# 빌드 마지막 단계(copyfile)가 실패한다.
+# 기본 출력 파일명을 변경해 충돌 가능성을 줄이고, 필요 시 name 값을 원래대로 조정 가능.
+output_name = 'LottoGeneratorPro_v25'
 
 # =============================================================================
 # 경량화 설정
@@ -127,11 +134,11 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='LottoGeneratorPro',
+    name=output_name,
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,  # 심볼 제거로 용량 감소
-    upx=True,    # UPX 압축 사용
+    strip=not is_windows,  # Windows에서는 strip 툴 부재로 경고/실패 가능성 있음
+    upx=not is_windows,    # Windows onefile 안정성 우선
     upx_exclude=[
         'vcruntime140.dll',
         'python*.dll',

@@ -293,6 +293,13 @@ class WinningInfoWidget(QWidget):
         if today.weekday() == 5 and now.hour < 21:
             estimated_draw -= 1
         return max(1, estimated_draw)
+
+    @staticmethod
+    def _safe_int(value, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
     
     def initUI(self):
         layout = QVBoxLayout()
@@ -421,63 +428,71 @@ class WinningInfoWidget(QWidget):
     
     def _on_data_received(self, data: dict):
         """API 데이터 수신 시 UI 업데이트"""
-        self.current_data = data
-        self.refresh_btn.setEnabled(True)
-        self.status_label.setVisible(False)
-        
-        # 기존 위젯 클리어
-        self._clear_layout(self.numbers_layout)
-        self._clear_layout(self.prize_layout)
-        
-        draw_date = data.get('drwNoDate', '')
-        draw_no = data.get('drwNo', 0)
-        
-        numbers = [
-            data.get('drwtNo1'), data.get('drwtNo2'), data.get('drwtNo3'),
-            data.get('drwtNo4'), data.get('drwtNo5'), data.get('drwtNo6')
-        ]
-        bonus = data.get('bnusNo')
-        
-        t = ThemeManager.get_theme()
-        
-        # 회차/날짜
-        date_label = QLabel(f"<b>{draw_no}회</b> ({draw_date})")
-        date_label.setStyleSheet(f"font-size: 13px; color: {t['text_secondary']};")
-        self.numbers_layout.addWidget(date_label)
-        
-        # 당첨 번호
-        for num in numbers:
-            ball = LottoBall(num, size=34)
-            self.numbers_layout.addWidget(ball)
-        
-        plus_label = QLabel("+")
-        plus_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['text_muted']};")
-        self.numbers_layout.addWidget(plus_label)
-        
-        bonus_ball = LottoBall(bonus, size=34)
-        self.numbers_layout.addWidget(bonus_ball)
-        
-        bonus_label = QLabel("보너스")
-        bonus_label.setStyleSheet(f"font-size: 11px; color: {t['text_muted']};")
-        self.numbers_layout.addWidget(bonus_label)
-        
-        self.numbers_widget.setVisible(True)
-        
-        # 당첨금 정보
-        first_prize = data.get('firstWinamnt', 0)
-        first_winners = data.get('firstPrzwnerCo', 0)
-        total_sales = data.get('totSellamnt', 0)
-        
-        prize_info = QLabel(f"🏆 <b style='color:{t['danger']};'>1등</b> <b>{first_prize:,}원</b> ({first_winners}명)")
-        prize_info.setStyleSheet("font-size: 14px;")
-        self.prize_layout.addWidget(prize_info)
-        
-        sales_info = QLabel(f"📊 판매액: <b>{total_sales:,}원</b>")
-        sales_info.setStyleSheet(f"font-size: 13px; color: {t['text_secondary']};")
-        self.prize_layout.addWidget(sales_info)
-        
-        self.prize_widget.setVisible(True)
-        self.dataLoaded.emit(data)
+        try:
+            draw_date = data.get('drwNoDate', '')
+            draw_no = self._safe_int(data.get('drwNo'))
+
+            numbers = [
+                self._safe_int(data.get('drwtNo1')), self._safe_int(data.get('drwtNo2')),
+                self._safe_int(data.get('drwtNo3')), self._safe_int(data.get('drwtNo4')),
+                self._safe_int(data.get('drwtNo5')), self._safe_int(data.get('drwtNo6'))
+            ]
+            bonus = self._safe_int(data.get('bnusNo'))
+
+            if draw_no <= 0 or any(n < 1 or n > 45 for n in numbers) or bonus < 1 or bonus > 45:
+                raise ValueError("Invalid winning payload")
+
+            self.current_data = data
+            self.refresh_btn.setEnabled(True)
+            self.status_label.setVisible(False)
+
+            # 기존 위젯 클리어
+            self._clear_layout(self.numbers_layout)
+            self._clear_layout(self.prize_layout)
+
+            t = ThemeManager.get_theme()
+
+            # 회차/날짜
+            date_label = QLabel(f"<b>{draw_no}회</b> ({draw_date})")
+            date_label.setStyleSheet(f"font-size: 13px; color: {t['text_secondary']};")
+            self.numbers_layout.addWidget(date_label)
+
+            # 당첨 번호
+            for num in numbers:
+                ball = LottoBall(num, size=34)
+                self.numbers_layout.addWidget(ball)
+
+            plus_label = QLabel("+")
+            plus_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {t['text_muted']};")
+            self.numbers_layout.addWidget(plus_label)
+
+            bonus_ball = LottoBall(bonus, size=34)
+            self.numbers_layout.addWidget(bonus_ball)
+
+            bonus_label = QLabel("보너스")
+            bonus_label.setStyleSheet(f"font-size: 11px; color: {t['text_muted']};")
+            self.numbers_layout.addWidget(bonus_label)
+
+            self.numbers_widget.setVisible(True)
+
+            # 당첨금 정보
+            first_prize = self._safe_int(data.get('firstWinamnt'))
+            first_winners = self._safe_int(data.get('firstPrzwnerCo'))
+            total_sales = self._safe_int(data.get('totSellamnt'))
+
+            prize_info = QLabel(f"🏆 <b style='color:{t['danger']};'>1등</b> <b>{first_prize:,}원</b> ({first_winners}명)")
+            prize_info.setStyleSheet("font-size: 14px;")
+            self.prize_layout.addWidget(prize_info)
+
+            sales_info = QLabel(f"📊 판매액: <b>{total_sales:,}원</b>")
+            sales_info.setStyleSheet(f"font-size: 13px; color: {t['text_secondary']};")
+            self.prize_layout.addWidget(sales_info)
+
+            self.prize_widget.setVisible(True)
+            self.dataLoaded.emit(data)
+        except Exception as e:
+            logger.error(f"Invalid winning info payload: {e}")
+            self._on_error("당첨 데이터 형식 오류")
     
     def _on_error(self, error_msg: str):
         self.refresh_btn.setEnabled(True)
@@ -499,9 +514,12 @@ class WinningInfoWidget(QWidget):
             return [], 0
         
         numbers = [
-            self.current_data.get('drwtNo1'), self.current_data.get('drwtNo2'),
-            self.current_data.get('drwtNo3'), self.current_data.get('drwtNo4'),
-            self.current_data.get('drwtNo5'), self.current_data.get('drwtNo6')
+            self._safe_int(self.current_data.get('drwtNo1')),
+            self._safe_int(self.current_data.get('drwtNo2')),
+            self._safe_int(self.current_data.get('drwtNo3')),
+            self._safe_int(self.current_data.get('drwtNo4')),
+            self._safe_int(self.current_data.get('drwtNo5')),
+            self._safe_int(self.current_data.get('drwtNo6'))
         ]
-        bonus = self.current_data.get('bnusNo', 0)
+        bonus = self._safe_int(self.current_data.get('bnusNo', 0))
         return numbers, bonus

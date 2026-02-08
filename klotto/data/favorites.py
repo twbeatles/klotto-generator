@@ -52,11 +52,30 @@ class FavoritesManager:
     
     def add(self, numbers: List[int], memo: str = "") -> bool:
         """즐겨찾기 추가"""
-        if any(f['numbers'] == numbers for f in self.favorites):
+        try:
+            normalized_numbers = sorted(int(n) for n in numbers)
+        except (TypeError, ValueError):
             return False
-        
+
+        if len(normalized_numbers) != 6 or len(set(normalized_numbers)) != 6:
+            return False
+        if any(n < 1 or n > 45 for n in normalized_numbers):
+            return False
+
+        for fav in self.favorites:
+            existing = fav.get('numbers', [])
+            try:
+                existing_normalized = sorted(int(n) for n in existing)
+            except (TypeError, ValueError):
+                continue
+            if existing_normalized == normalized_numbers:
+                return False
+
+        if not isinstance(memo, str):
+            memo = str(memo)
+
         self.favorites.append({
-            'numbers': numbers,
+            'numbers': normalized_numbers,
             'memo': memo,
             'created_at': datetime.datetime.now().isoformat()
         })
