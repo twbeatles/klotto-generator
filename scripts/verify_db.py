@@ -1,9 +1,14 @@
 import sqlite3
-from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "lotto_history.db"
+try:
+    from scripts.common import resolve_db_path
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.common import resolve_db_path
+
+DB_PATH = resolve_db_path()
 
 def verify():
     if not DB_PATH.exists():

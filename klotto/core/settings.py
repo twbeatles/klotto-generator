@@ -9,7 +9,7 @@ class SettingsManager:
     """사용자 설정 관리자 (윈도우 크기, 테마, 옵션 등)"""
     
     def __init__(self):
-        self.settings_file = APP_CONFIG['SETTINGS_FILE']
+        self.settings_file = APP_CONFIG.get('SETTINGS_FILE')
         self.settings: Dict[str, Any] = {
             'theme': 'light',
             'window_geometry': None,

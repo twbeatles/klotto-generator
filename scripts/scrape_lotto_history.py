@@ -1,15 +1,19 @@
+import argparse
 import sqlite3
 import requests
 import json
 import time
-import os
-from pathlib import Path
-from datetime import datetime
+try:
+    from scripts.common import resolve_db_path
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.common import resolve_db_path
 
 # Configuration
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "lotto_history.db"
+DB_PATH = resolve_db_path()
+DATA_DIR = DB_PATH.parent
 API_URL = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do?srchLtEpsd={}"
 
 def init_db():
@@ -48,7 +52,7 @@ def get_last_draw_no(conn):
     result = cursor.fetchone()
     return result[0] if result[0] else 0
 
-def fetch_draw(draw_no):
+def fetch_draw(draw_no, verify_ssl=True):
     """Fetch draw data from the official API."""
     url = API_URL.format(draw_no)
     try:
@@ -58,9 +62,11 @@ def fetch_draw(draw_no):
             'Accept': 'application/json, text/javascript, */*; q=0.01',
             'X-Requested-With': 'XMLHttpRequest',
         }
-        # Disable SSL warning for testing if verification fails
-        requests.packages.urllib3.disable_warnings() 
-        response = requests.get(url, headers=headers, timeout=10, verify=False)
+
+        if not verify_ssl:
+            requests.packages.urllib3.disable_warnings()
+
+        response = requests.get(url, headers=headers, timeout=10, verify=verify_ssl)
         
         if response.status_code == 200:
             try:
@@ -140,8 +146,11 @@ def save_draw(conn, data):
         print(f"Database error: {e}")
         return False
 
-def main():
+def main(verify_ssl=True):
     print("Starting Lotto History Scraper...")
+    if not verify_ssl:
+        print("WARNING: SSL certificate verification is disabled (--insecure)")
+
     conn = init_db()
     
     last_draw = get_last_draw_no(conn)
@@ -153,7 +162,7 @@ def main():
     
     while True:
         print(f"Fetching draw #{current_draw}...", end=" ", flush=True)
-        data = fetch_draw(current_draw)
+        data = fetch_draw(current_draw, verify_ssl=verify_ssl)
         
         if data:
             # Check if valid return
@@ -193,4 +202,11 @@ def main():
     conn.close()
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Fetch and store lotto draw history.")
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Disable SSL certificate verification (not recommended).",
+    )
+    args = parser.parse_args()
+    main(verify_ssl=not args.insecure)

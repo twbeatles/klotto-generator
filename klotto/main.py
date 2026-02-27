@@ -38,6 +38,7 @@ def main():
     logger.info(f"Data directory: {APP_CONFIG['FAVORITES_FILE'].parent}")
     
     window = LottoApp()
+    window._sync_worker = None
     window.show()
     
     # 백그라운드에서 최신 당첨 정보 동기화 시작

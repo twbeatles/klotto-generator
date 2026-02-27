@@ -1,3 +1,13 @@
+try:
+    from scripts.common import ensure_repo_on_path
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.common import ensure_repo_on_path
+
+ensure_repo_on_path()
+
 from klotto.core.stats import WinningStatsManager
 
 m = WinningStatsManager()

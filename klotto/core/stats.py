@@ -17,7 +17,41 @@ class WinningStatsManager:
         self.stats_file: Path = cast(Path, APP_CONFIG['WINNING_STATS_FILE'])
         self.db_path: Path = cast(Path, APP_CONFIG['LOTTO_HISTORY_DB'])
         self.winning_data: List[Dict[str, Any]] = []
+        self._draw_index: Dict[int, Dict[str, Any]] = {}
+        self._frequency_cache: Optional[Dict[str, Any]] = None
+        self._range_cache: Optional[Dict[str, int]] = None
+        self._pair_cache: Optional[Dict[str, Any]] = None
         self._load()
+
+    def _invalidate_analysis_cache(self):
+        self._frequency_cache = None
+        self._range_cache = None
+        self._pair_cache = None
+
+    def _set_winning_data(self, data: List[Dict[str, Any]]):
+        self.winning_data = data
+        self._draw_index = {}
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            try:
+                draw_no = int(row.get('draw_no'))
+            except (TypeError, ValueError):
+                continue
+            self._draw_index[draw_no] = row
+        self._invalidate_analysis_cache()
+
+    def _append_draw_data(self, draw_no: int, numbers: List[int], bonus: int, draw_date: Optional[str] = None):
+        row = {
+            'draw_no': draw_no,
+            'numbers': numbers,
+            'bonus': bonus,
+            'date': draw_date or datetime.datetime.now().isoformat()
+        }
+        self.winning_data.append(row)
+        self.winning_data.sort(key=lambda x: x['draw_no'], reverse=True)
+        self._draw_index[draw_no] = row
+        self._invalidate_analysis_cache()
     
     def _load(self):
         """데이터 로드 - DB 우선, JSON 폴백"""
@@ -44,7 +78,7 @@ class WinningStatsManager:
             if not rows:
                 return False
             
-            self.winning_data = []
+            parsed_data: List[Dict[str, Any]] = []
             invalid_count = 0
             for row in rows:
                 normalized = self._normalize_draw_input(row[0], [row[2], row[3], row[4], row[5], row[6], row[7]], row[8])
@@ -53,7 +87,7 @@ class WinningStatsManager:
                     continue
 
                 draw_no, numbers, bonus = normalized
-                self.winning_data.append({
+                parsed_data.append({
                     'draw_no': draw_no,
                     'date': row[1] or '',
                     'numbers': numbers,
@@ -63,8 +97,10 @@ class WinningStatsManager:
             if invalid_count:
                 logger.warning(f"Skipped {invalid_count} invalid winning records from DB")
 
-            if not self.winning_data:
+            if not parsed_data:
                 return False
+
+            self._set_winning_data(parsed_data)
             
             logger.info(f"Loaded {len(self.winning_data)} winning records from DB")
             return True
@@ -140,11 +176,43 @@ class WinningStatsManager:
         try:
             if self.stats_file and self.stats_file.exists():
                 with open(self.stats_file, 'r', encoding='utf-8') as f:
-                    self.winning_data = json.load(f)
+                    loaded = json.load(f)
+
+                parsed_data: List[Dict[str, Any]] = []
+                seen_draws = set()
+                for item in loaded if isinstance(loaded, list) else []:
+                    if not isinstance(item, dict):
+                        continue
+
+                    normalized = self._normalize_draw_input(
+                        item.get('draw_no'),
+                        item.get('numbers', []),
+                        item.get('bonus'),
+                    )
+                    if not normalized:
+                        continue
+
+                    draw_no, numbers, bonus = normalized
+                    if draw_no in seen_draws:
+                        continue
+
+                    date_value = item.get('date')
+                    parsed_data.append({
+                        'draw_no': draw_no,
+                        'numbers': numbers,
+                        'bonus': bonus,
+                        'date': date_value if isinstance(date_value, str) else ''
+                    })
+                    seen_draws.add(draw_no)
+
+                parsed_data.sort(key=lambda x: x['draw_no'], reverse=True)
+                self._set_winning_data(parsed_data)
                 logger.info(f"Loaded {len(self.winning_data)} winning records from JSON")
+            else:
+                self._set_winning_data([])
         except Exception as e:
             logger.error(f"Failed to load winning stats: {e}")
-            self.winning_data = []
+            self._set_winning_data([])
     
     def _save(self):
         """통계 데이터 저장 (JSON - 캐시용)"""
@@ -170,45 +238,82 @@ class WinningStatsManager:
                     temp_file.unlink()
             except: pass
     
-    def add_winning_data(self, draw_no: int, numbers: List[int], bonus: int, draw_date: Optional[str] = None):
-        """당첨 데이터 추가 (API 동기화용)"""
+    def add_winning_data(self, draw_no: int, numbers: List[int], bonus: int, draw_date: Optional[str] = None) -> bool:
+        """당첨 데이터 추가 (신규 저장 시 True, 중복/실패 시 False)"""
         normalized = self._normalize_draw_input(draw_no, numbers, bonus)
         if not normalized:
             logger.warning(f"Invalid winning data ignored: draw_no={draw_no}")
-            return
+            return False
 
         parsed_draw_no, parsed_numbers, parsed_bonus = normalized
 
+        # 메모리 캐시 중복 체크 (O(1))
+        if parsed_draw_no in self._draw_index:
+            return False
+
         if self.db_path:
             if self._save_to_db(parsed_draw_no, parsed_numbers, parsed_bonus, draw_date=draw_date):
-                self._load_from_db()
+                self._append_draw_data(parsed_draw_no, parsed_numbers, parsed_bonus, draw_date=draw_date)
                 self._save()
-                return
+                return True
 
+            # DB 삽입 실패 시 최신 상태 다시 로드 (중복 여부 동기화)
             if self._load_from_db():
-                return
+                return False
 
-        # 중복 체크
-        if any(d['draw_no'] == parsed_draw_no for d in self.winning_data):
-            return
+        if parsed_draw_no in self._draw_index:
+            return False
         
-        self.winning_data.append({
-            'draw_no': parsed_draw_no,
-            'numbers': parsed_numbers,
-            'bonus': parsed_bonus,
-            'date': draw_date or datetime.datetime.now().isoformat()
-        })
-        
-        # 회차순 정렬
-        self.winning_data.sort(key=lambda x: x['draw_no'], reverse=True)
+        self._append_draw_data(parsed_draw_no, parsed_numbers, parsed_bonus, draw_date=draw_date)
         
         # JSON 캐시 크기 제한 (DB가 없을 때만 적용)
         if not (self.db_path and self.db_path.exists()):
             cache_size = cast(int, APP_CONFIG['WINNING_STATS_CACHE_SIZE'])
             if len(self.winning_data) > cache_size:
-                self.winning_data = self.winning_data[:cache_size]
+                self._set_winning_data(self.winning_data[:cache_size])
         
         self._save()
+        return True
+
+    def get_draw_data(self, draw_no: int) -> Optional[Dict[str, Any]]:
+        """특정 회차 데이터 반환"""
+        try:
+            target = int(draw_no)
+        except (TypeError, ValueError):
+            return None
+
+        if target <= 0:
+            return None
+
+        cached = self._draw_index.get(target)
+        if cached:
+            return cached
+
+        # 캐시가 오래됐을 수 있으므로 DB 재로드 후 한 번 더 조회
+        if self.db_path and self.db_path.exists():
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        '''
+                        SELECT draw_no, date, num1, num2, num3, num4, num5, num6, bonus
+                        FROM draws
+                        WHERE draw_no = ?
+                        LIMIT 1
+                        ''',
+                        (target,),
+                    )
+                    row = cursor.fetchone()
+                if row:
+                    normalized = self._normalize_draw_input(row[0], [row[2], row[3], row[4], row[5], row[6], row[7]], row[8])
+                    if normalized:
+                        parsed_draw_no, numbers, bonus = normalized
+                        self._append_draw_data(parsed_draw_no, numbers, bonus, draw_date=row[1] or '')
+                        return self._draw_index.get(parsed_draw_no)
+            except Exception as e:
+                logger.error(f"Failed to query draw #{target} from DB: {e}")
+
+        return None
     
     def reload_from_db(self):
         """DB에서 데이터 다시 로드 (수동 새로고침용)"""
@@ -217,6 +322,9 @@ class WinningStatsManager:
     
     def get_frequency_analysis(self) -> Dict[str, Any]:
         """번호별 출현 빈도 분석"""
+        if self._frequency_cache is not None:
+            return dict(self._frequency_cache)
+
         if not self.winning_data:
             return {}
         
@@ -235,33 +343,43 @@ class WinningStatsManager:
         # 정렬
         sorted_by_count = sorted(number_counts.items(), key=lambda x: x[1], reverse=True)
         
-        return {
+        self._frequency_cache = {
             'total_draws': len(self.winning_data),
             'number_counts': number_counts,
             'bonus_counts': bonus_counts,
             'hot_numbers': sorted_by_count[:10],  # 핫 넘버 TOP 10
             'cold_numbers': sorted_by_count[-10:],  # 콜드 넘버 10개
         }
+        return dict(self._frequency_cache)
     
     def get_range_distribution(self) -> Dict[str, int]:
         """번호대별 분포 분석"""
+        if self._range_cache is not None:
+            return dict(self._range_cache)
+
         if not self.winning_data:
             return {}
-        
-        ranges = {'1-10': 0, '11-20': 0, '21-30': 0, '31-40': 0, '41-45': 0}
-        
-        for data in self.winning_data:
-            for n in data['numbers']:
-                if n <= 10: ranges['1-10'] += 1
-                elif n <= 20: ranges['11-20'] += 1
-                elif n <= 30: ranges['21-30'] += 1
-                elif n <= 40: ranges['31-40'] += 1
-                else: ranges['41-45'] += 1
-        
-        return ranges
+
+        frequency = self.get_frequency_analysis()
+        number_counts = frequency.get('number_counts', {})
+        if not isinstance(number_counts, dict):
+            return {}
+
+        ranges = {
+            '1-10': sum(number_counts.get(i, 0) for i in range(1, 11)),
+            '11-20': sum(number_counts.get(i, 0) for i in range(11, 21)),
+            '21-30': sum(number_counts.get(i, 0) for i in range(21, 31)),
+            '31-40': sum(number_counts.get(i, 0) for i in range(31, 41)),
+            '41-45': sum(number_counts.get(i, 0) for i in range(41, 46)),
+        }
+        self._range_cache = ranges
+        return dict(ranges)
     
     def get_pair_analysis(self) -> Dict[str, Any]:
         """연속 당첨 쌍 분석 (같이 나온 번호 쌍)"""
+        if self._pair_cache is not None:
+            return dict(self._pair_cache)
+
         if not self.winning_data:
             return {}
         
@@ -276,7 +394,8 @@ class WinningStatsManager:
         
         # 가장 많이 나온 쌍 TOP 10
         sorted_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)
-        return {'top_pairs': sorted_pairs[:10]}
+        self._pair_cache = {'top_pairs': sorted_pairs[:10]}
+        return dict(self._pair_cache)
     
     def get_recent_trend(self, count: int = 10) -> List[Dict[str, Any]]:
         """최근 N회차 트렌드"""

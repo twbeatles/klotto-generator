@@ -4,6 +4,13 @@ DB 데이터를 엑셀 파일로 내보내는 스크립트
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+try:
+    from scripts.common import resolve_db_path
+except ModuleNotFoundError:
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scripts.common import resolve_db_path
 
 try:
     import openpyxl
@@ -18,9 +25,8 @@ except ImportError:
     from openpyxl.utils import get_column_letter
 
 # Configuration
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-DB_PATH = DATA_DIR / "lotto_history.db"
+DB_PATH = resolve_db_path()
+DATA_DIR = DB_PATH.parent
 
 def export_to_excel(output_path: Path = None):
     """Export database to Excel file."""

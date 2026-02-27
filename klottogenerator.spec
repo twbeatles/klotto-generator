@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-Lotto Generator Pro v2.4 - PyInstaller Spec File (Onefile Mode)
+Lotto Generator Pro v2.5 - PyInstaller Spec File (Onefile Mode)
 빌드 명령어: pyinstaller klottogenerator.spec
 """
 
@@ -12,7 +12,7 @@ project_path = Path(SPECPATH)
 is_windows = sys.platform.startswith('win')
 
 # NOTE:
-# 일부 Windows 환경에서 dist/LottoGeneratorPro.exe 경로에 대한 쓰기 권한 충돌이 발생해
+# 일부 Windows 환경에서 dist/LottoGeneratorPro_v25.exe 경로에 대한 쓰기 권한 충돌이 발생해
 # 빌드 마지막 단계(copyfile)가 실패한다.
 # 기본 출력 파일명을 변경해 충돌 가능성을 줄이고, 필요 시 name 값을 원래대로 조정 가능.
 output_name = 'LottoGeneratorPro_v25'
@@ -23,8 +23,7 @@ output_name = 'LottoGeneratorPro_v25'
 # 불필요한 모듈 제외 목록 (용량 최적화)
 exclude_modules = [
     # 과학/데이터 라이브러리
-    'matplotlib', 'numpy', 'pandas', 'scipy', 'sklearn',
-    'cv2', 'opencv', 'pyzbar',
+    'matplotlib', 'pandas', 'scipy', 'sklearn',
     
     # 테스트/개발 도구
     'test', 'tests', 'unittest', 'pytest', 'doctest',
@@ -59,6 +58,10 @@ hidden_imports = [
     'PyQt6.QtWidgets',
     'qrcode',
     'PIL.ImageQt',
+    # QR 스캐너 의존성 (지연 import 사용 시 번들 누락 방지)
+    'cv2',
+    'numpy',
+    'pyzbar.pyzbar',
     'email',
     'PyQt6.QtNetwork',
 ]
@@ -174,7 +177,7 @@ exe = EXE(
 #    pyinstaller klottogenerator.spec
 #
 # 4. 결과물 위치
-#    dist/LottoGeneratorPro.exe (단일 파일)
+#    dist/LottoGeneratorPro_v25.exe (단일 파일)
 #
 # =============================================================================
 # 예상 파일 크기

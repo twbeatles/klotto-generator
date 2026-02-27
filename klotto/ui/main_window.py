@@ -1,17 +1,17 @@
 import sys
 import random
 import datetime
-from pathlib import Path
-from typing import List, Set, Dict, Optional
+from typing import List, Set, Dict, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QSpinBox, QCheckBox, QFrame, QScrollArea, 
     QMessageBox, QSystemTrayIcon, QMenu, QGroupBox, QGridLayout,
-    QApplication
+    QLineEdit,
+    QApplication, QDialog
 )
-from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QIcon, QFont, QAction, QCloseEvent
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont, QAction, QCloseEvent
 
 from klotto.config import APP_CONFIG
 from klotto.utils import logger, ThemeManager
@@ -20,16 +20,18 @@ from klotto.core.generator import SmartNumberGenerator
 from klotto.core.stats import WinningStatsManager
 from klotto.data.favorites import FavoritesManager
 from klotto.data.history import HistoryManager
-from klotto.ui.widgets import LottoBall, ResultRow, WinningInfoWidget
+from klotto.ui.widgets import ResultRow, WinningInfoWidget
 from klotto.ui.dialogs import (
     StatisticsDialog, HistoryDialog, FavoritesDialog, 
-    RealStatsDialog, WinningCheckDialog, ExportImportDialog, QRCodeDialog
+    RealStatsDialog, WinningCheckDialog, ExportImportDialog
 )
 
 # ============================================================
 # 메인 애플리케이션 클래스
 # ============================================================
 class LottoApp(QWidget):
+    MAX_GENERATE_RETRIES = 100
+
     def __init__(self):
         super().__init__()
         self.generated_sets: List[List[int]] = []
@@ -152,9 +154,28 @@ class LottoApp(QWidget):
         
         row2_layout.addStretch()
         settings_layout.addLayout(row2_layout)
-        
-        # 고급 설정 (고정수/제외수) - 접이식으로 하면 좋겠지만 일단 버튼으로 다이얼로그 띄우지 않고 심플하게
-        # 공간 절약을 위해 제외수는 일단 생략하거나 나중에 추가
+
+        # 세 번째 줄: 고정수/제외수 입력
+        row3_layout = QGridLayout()
+        row3_layout.setHorizontalSpacing(12)
+        row3_layout.setVerticalSpacing(6)
+
+        fixed_label = QLabel("고정수:")
+        self.fixed_nums_input = QLineEdit()
+        self.fixed_nums_input.setPlaceholderText("예: 1, 3, 5-8")
+        self.fixed_nums_input.setToolTip("쉼표로 구분하고 범위는 1-10 형식으로 입력하세요.")
+
+        exclude_label = QLabel("제외수:")
+        self.exclude_nums_input = QLineEdit()
+        self.exclude_nums_input.setPlaceholderText("예: 7-10, 22")
+        self.exclude_nums_input.setToolTip("쉼표로 구분하고 범위는 1-10 형식으로 입력하세요.")
+
+        row3_layout.addWidget(fixed_label, 0, 0)
+        row3_layout.addWidget(self.fixed_nums_input, 0, 1)
+        row3_layout.addWidget(exclude_label, 1, 0)
+        row3_layout.addWidget(self.exclude_nums_input, 1, 1)
+        row3_layout.setColumnStretch(1, 1)
+        settings_layout.addLayout(row3_layout)
         
         main_layout.addWidget(settings_group)
         
@@ -226,6 +247,7 @@ class LottoApp(QWidget):
             ("⭐ 즐겨찾기", self._show_favorites),
             ("📈 당첨통계", self._show_real_stats),
             ("🎯 당첨확인", self._show_winning_check),
+            ("📷 QR 스캔", self._show_qr_scanner),
             ("💾 데이터관리", self._show_data_manager),
         ]
         
@@ -306,28 +328,102 @@ class LottoApp(QWidget):
     
     def _apply_theme(self):
         self.setStyleSheet(ThemeManager.get_stylesheet())
+
+    @staticmethod
+    def _parse_number_input(text: str, field_name: str) -> Set[int]:
+        parsed: Set[int] = set()
+        raw = (text or "").strip()
+        if not raw:
+            return parsed
+
+        for token in raw.split(","):
+            item = token.strip()
+            if not item:
+                continue
+
+            if "-" in item:
+                parts = item.split("-")
+                if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+                    raise ValueError(f"{field_name} 형식 오류: '{item}'")
+                try:
+                    start = int(parts[0].strip())
+                    end = int(parts[1].strip())
+                except ValueError as exc:
+                    raise ValueError(f"{field_name}에 숫자가 아닌 값이 있습니다: '{item}'") from exc
+
+                if start > end:
+                    raise ValueError(f"{field_name} 범위는 시작값이 끝값보다 클 수 없습니다: '{item}'")
+                if start < 1 or end > 45:
+                    raise ValueError(f"{field_name}는 1~45 범위만 허용됩니다: '{item}'")
+                parsed.update(range(start, end + 1))
+                continue
+
+            try:
+                number = int(item)
+            except ValueError as exc:
+                raise ValueError(f"{field_name}에 숫자가 아닌 값이 있습니다: '{item}'") from exc
+
+            if number < 1 or number > 45:
+                raise ValueError(f"{field_name}는 1~45 범위만 허용됩니다: '{item}'")
+            parsed.add(number)
+
+        return parsed
+
+    def _collect_generation_constraints(self) -> Optional[Tuple[Set[int], Set[int]]]:
+        try:
+            fixed_nums = self._parse_number_input(self.fixed_nums_input.text(), "고정수")
+            exclude_nums = self._parse_number_input(self.exclude_nums_input.text(), "제외수")
+        except ValueError as e:
+            QMessageBox.warning(self, "입력 오류", str(e))
+            return None
+
+        if len(fixed_nums) > 6:
+            QMessageBox.warning(self, "입력 오류", "고정수는 최대 6개까지 지정할 수 있습니다.")
+            return None
+
+        overlap = fixed_nums & exclude_nums
+        if overlap:
+            conflict = ", ".join(str(n) for n in sorted(overlap))
+            QMessageBox.warning(self, "입력 오류", f"고정수와 제외수가 겹칩니다: {conflict}")
+            return None
+
+        available = set(range(1, 46)) - fixed_nums - exclude_nums
+        required = 6 - len(fixed_nums)
+        if len(available) < required:
+            QMessageBox.warning(
+                self,
+                "입력 오류",
+                "고정수/제외수 조건으로는 6개 번호를 만들 수 없습니다."
+            )
+            return None
+
+        return fixed_nums, exclude_nums
     
     def generate_numbers(self):
         """번호 생성 실행"""
         try:
             count = self.count_spin.value()
-            result_sets = []
+            generated_sets: List[List[int]] = []
+            failed_count = 0
             
             # 옵션 가져오기
             use_smart = self.smart_mode_chk.isChecked()
             prefer_hot = self.prefer_hot_chk.isChecked()
             balance_mode = self.balance_chk.isChecked()
             limit_consecutive = self.consecutive_chk.isChecked()
-            
-            # 고정수/제외수 (현재 UI에는 없지만 추후 확장성을 위해)
-            fixed_nums = set() 
-            exclude_nums = set()
-            
+
+            constraints = self._collect_generation_constraints()
+            if constraints is None:
+                return
+            fixed_nums, exclude_nums = constraints
+            existing_keys = self.history_manager.get_number_keys()
+            generated_keys: Set[Tuple[int, ...]] = set()
+
             for _ in range(count):
-                max_retries = 100
-                nums = []
-                
-                for _ in range(max_retries):
+                nums: List[int] = []
+                valid = False
+
+                for _ in range(self.MAX_GENERATE_RETRIES):
                     if use_smart:
                         nums = self.smart_generator.generate_smart_numbers(
                             fixed_nums=fixed_nums,
@@ -351,22 +447,43 @@ class LottoApp(QWidget):
                             valid = False
                     
                     # 2. 중복 히스토리 체크 (최근 100개)
-                    if self.history_manager.is_duplicate(nums):
+                    key = tuple(nums)
+                    if key in existing_keys or key in generated_keys:
                         valid = False
                         
                     if valid:
                         break
-                
-                result_sets.append(nums)
-                # 히스토리 저장
-                self.history_manager.add(nums)
-            
+
+                if not valid:
+                    failed_count += 1
+                    continue
+
+                key = tuple(nums)
+                generated_keys.add(key)
+                generated_sets.append(nums)
+
+            result_sets = self.history_manager.add_many(generated_sets)
+            failed_count += max(0, len(generated_sets) - len(result_sets))
+
+            if not result_sets:
+                QMessageBox.warning(
+                    self,
+                    "생성 실패",
+                    f"요청 {count}개 중 생성된 조합이 없습니다.\n실패: {failed_count}개"
+                )
+                return
+
             self._display_results(result_sets)
             self.generated_sets = result_sets
-            self.total_generated += count
+            self.total_generated += len(result_sets)
             self.last_generated_time = datetime.datetime.now()
-            
-            # 상태바 같은 곳에 메시지 표시하면 좋음
+
+            if failed_count > 0:
+                QMessageBox.warning(
+                    self,
+                    "부분 생성 완료",
+                    f"요청 {count}개 / 생성 {len(result_sets)}개 / 실패 {failed_count}개"
+                )
             
         except Exception as e:
             logger.error(f"Generate Error: {e}")
@@ -391,24 +508,28 @@ class LottoApp(QWidget):
         
         # 최신 당첨 번호 (비교용)
         winning_nums, bonus = self.winning_info_widget.get_winning_numbers()
-        
-        for i, nums in enumerate(sets):
-            # 분석
-            analysis = NumberAnalyzer.analyze(nums)
-            
-            # 당첨 번호와 매칭
-            matched_info = NumberAnalyzer.compare_with_winning(nums, winning_nums, bonus)
-            matched_nums = matched_info.get('matched', [])
-            
-            # Row 위젯 생성
-            idx = self.total_generated + i + 1
-            row = ResultRow(idx, nums, analysis, matched_nums)
-            
-            # 시그널 연결
-            row.favoriteClicked.connect(self._add_to_favorites)
-            row.copyClicked.connect(self._on_copy)
-            
-            self.results_layout.addWidget(row)
+        self.results_container.setUpdatesEnabled(False)
+        try:
+            for i, nums in enumerate(sets):
+                # 분석
+                analysis = NumberAnalyzer.analyze(nums)
+                
+                # 당첨 번호와 매칭
+                matched_info = NumberAnalyzer.compare_with_winning(nums, winning_nums, bonus)
+                matched_nums = matched_info.get('matched', [])
+                
+                # Row 위젯 생성
+                idx = self.total_generated + i + 1
+                row = ResultRow(idx, nums, analysis, matched_nums)
+                
+                # 시그널 연결
+                row.favoriteClicked.connect(self._add_to_favorites)
+                row.copyClicked.connect(self._on_copy)
+                
+                self.results_layout.addWidget(row)
+        finally:
+            self.results_container.setUpdatesEnabled(True)
+            self.results_container.update()
             
         # 스크롤 최하단으로 이동
         QTimer.singleShot(100, lambda: self.scroll_area.verticalScrollBar().setValue(
@@ -461,7 +582,37 @@ class LottoApp(QWidget):
         dialog.exec()
         
     def _show_winning_check(self):
-        dialog = WinningCheckDialog(self.favorites_manager, self.history_manager, self.stats_manager, self)
+        dialog = WinningCheckDialog(
+            self.favorites_manager,
+            self.history_manager,
+            self.stats_manager,
+            self
+        )
+        dialog.exec()
+
+    def _show_qr_scanner(self):
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            from klotto.ui.scanner import QRCodeScannerDialog
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        dialog = QRCodeScannerDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        payload = dialog.scanned_data
+        if not payload:
+            QMessageBox.warning(self, "스캔 실패", "스캔된 데이터를 찾지 못했습니다.")
+            return
+
+        dialog = WinningCheckDialog(
+            self.favorites_manager,
+            self.history_manager,
+            self.stats_manager,
+            self,
+            qr_payload=payload
+        )
         dialog.exec()
         
     def _show_data_manager(self):
@@ -471,5 +622,18 @@ class LottoApp(QWidget):
 
     def closeEvent(self, event: QCloseEvent):
         """종료 시 처리"""
-        # 필요한 저장 작업 등이 있다면 여기서
+        try:
+            sync_worker = getattr(self, "_sync_worker", None)
+            if sync_worker and sync_worker.isRunning():
+                sync_worker.cancel()
+                sync_worker.wait(2000)
+
+            if hasattr(self, "winning_info_widget") and self.winning_info_widget:
+                self.winning_info_widget.network_manager.cancel()
+
+            if hasattr(self, "tray_icon") and self.tray_icon:
+                self.tray_icon.hide()
+        except Exception as e:
+            logger.warning(f"Close cleanup error: {e}")
+
         event.accept()

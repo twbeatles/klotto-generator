@@ -1,10 +1,17 @@
-import cv2
-import numpy as np
+from typing import Optional
+
+try:
+    import cv2
+    HAS_CV2 = True
+except Exception as e:
+    cv2 = None
+    HAS_CV2 = False
+
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QMessageBox, QFileDialog, QComboBox, QFrame
+    QMessageBox, QFileDialog
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QImage, QPixmap
 
 from klotto.utils import logger, ThemeManager
@@ -13,7 +20,6 @@ from klotto.qr_utils import parse_lotto_qr_url
 # Try importing pyzbar
 try:
     from pyzbar.pyzbar import decode
-    msg = ""
     HAS_PYZBAR = True
 except ImportError:
     HAS_PYZBAR = False
@@ -21,8 +27,11 @@ except Exception as e: # Handle dylib issues on some OS
     HAS_PYZBAR = False
     logger.error(f"Failed to import pyzbar: {e}")
 
+if not HAS_CV2:
+    logger.error("Failed to import OpenCV (cv2)")
+
 class CameraWorker(QThread):
-    image_data = pyqtSignal(np.ndarray)
+    image_data = pyqtSignal(object)
     
     def __init__(self, camera_index=0):
         super().__init__()
@@ -54,13 +63,19 @@ class QRCodeScannerDialog(QDialog):
         self.setFixedSize(600, 500)
         
         self.scanned_data = None
-        self.camera_worker = None
+        self.camera_worker: Optional[CameraWorker] = None
         
         self._setup_ui()
         self._apply_theme()
-        
-        if not HAS_PYZBAR:
-            QMessageBox.critical(self, "오류", "pyzbar 라이브러리가 필요합니다.\npip install pyzbar opencv-python")
+
+        if not self._requirements_ok():
+            self._disable_scanner_controls()
+            QMessageBox.critical(
+                self,
+                "의존성 누락",
+                "QR 스캔 기능에 필요한 라이브러리가 없습니다.\n"
+                "pip install opencv-python pyzbar numpy"
+            )
     
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -106,6 +121,15 @@ class QRCodeScannerDialog(QDialog):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setMinimumHeight(35)
 
+    @staticmethod
+    def _requirements_ok() -> bool:
+        return HAS_CV2 and HAS_PYZBAR
+
+    def _disable_scanner_controls(self):
+        self.cam_btn.setEnabled(False)
+        self.file_btn.setEnabled(False)
+        self.status_label.setText("스캔 기능 비활성화: 필수 라이브러리 없음")
+
     def _apply_theme(self):
         t = ThemeManager.get_theme()
         self.setStyleSheet(f"background-color: {t['bg_primary']}; color: {t['text_primary']};")
@@ -126,6 +150,10 @@ class QRCodeScannerDialog(QDialog):
         self.file_btn.setStyleSheet(btn_style)
 
     def _toggle_camera(self):
+        if not self._requirements_ok():
+            QMessageBox.warning(self, "기능 비활성화", "QR 스캔 의존성이 설치되지 않았습니다.")
+            return
+
         if self.camera_worker and self.camera_worker.isRunning():
             self.camera_worker.stop()
             self.cam_btn.setText("📷 카메라 시작")
@@ -137,6 +165,9 @@ class QRCodeScannerDialog(QDialog):
             self.cam_btn.setText("⏹ 카메라 중지")
 
     def _update_frame(self, frame):
+        if not HAS_CV2:
+            return
+
         # Convert to Qt Image
         rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
@@ -149,10 +180,15 @@ class QRCodeScannerDialog(QDialog):
         self._decode_frame(frame)
 
     def _decode_frame(self, frame):
-        if not HAS_PYZBAR:
+        if not self._requirements_ok():
             return
-            
-        decoded_objects = decode(frame)
+
+        try:
+            decoded_objects = decode(frame)
+        except Exception as e:
+            logger.error(f"Failed to decode QR frame: {e}")
+            return
+
         for obj in decoded_objects:
             data = obj.data.decode('utf-8')
             if 'dhlottery.co.kr' in data:
@@ -163,6 +199,10 @@ class QRCodeScannerDialog(QDialog):
                 break
 
     def _load_image(self):
+        if not self._requirements_ok():
+            QMessageBox.warning(self, "기능 비활성화", "QR 스캔 의존성이 설치되지 않았습니다.")
+            return
+
         fname, _ = QFileDialog.getOpenFileName(self, '이미지 열기', '', "Image files (*.jpg *.png *.jpeg)")
         if fname:
             frame = cv2.imread(fname)

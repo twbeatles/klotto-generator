@@ -32,15 +32,22 @@
 - **즐겨찾기**: 마음에 드는 번호 조합을 별도로 저장하고 관리
 - **QR 코드**: 번호 조합을 QR 코드로 생성 및 스캔
 
+### 6. ⚡ 성능 최적화 (2026-02-27)
+- **중복 검사 최적화**: 히스토리/즐겨찾기 중복 검사를 인덱스 기반으로 처리하여 생성/가져오기 응답성 개선
+- **배치 저장 도입**: 다건 생성 및 JSON 가져오기 시 단일 저장 경로를 사용해 디스크 I/O 감소
+- **통계 캐시/인덱스**: 회차 인덱스 + 분석 캐시로 당첨 통계 조회 속도 개선
+- **초기 로딩 개선**: QR 스캐너 의존성을 지연 로딩하여 앱 시작 체감 속도 개선
+
 ## 🛠️ 설치 및 실행
 
 ### 요구 사항
 - Python 3.8 이상
-- PyQt6 라이브러리
+- 필수 패키지: `PyQt6`, `requests`, `qrcode`, `Pillow`, `numpy`, `opencv-python`, `pyzbar`
+- 선택 패키지: `openpyxl` (엑셀 내보내기 스크립트 사용 시)
 
 ### 설치
 ```bash
-pip install PyQt6 requests qrcode pillow
+pip install -r requirements.txt
 ```
 
 ### 실행
@@ -53,7 +60,7 @@ python run_klotto.py
 pip install pyinstaller
 pyinstaller klottogenerator.spec
 ```
-빌드된 실행 파일은 `dist/LottoGeneratorPro.exe` (단일 파일)로 생성됩니다.
+빌드된 실행 파일은 `dist/LottoGeneratorPro_v25.exe` (단일 파일)로 생성됩니다.
 
 ## 📁 프로젝트 구조
 
@@ -79,8 +86,11 @@ lotto/
 ├── data/                    # 로또 역대 당첨 DB
 │   └── lotto_history.db    # SQLite DB (1회~현재)
 ├── scripts/                 # 유틸리티 스크립트
-│   ├── scrape_lotto_history.py  # DB 스크래핑
-│   └── export_to_excel.py       # 엑셀 내보내기
+│   ├── common.py                 # 스크립트 공통 경로/DB resolver
+│   ├── test_stats.py             # 통계 로드 점검
+│   ├── verify_db.py              # DB 상태 점검
+│   ├── scrape_lotto_history.py   # DB 스크래핑
+│   └── export_to_excel.py        # 엑셀 내보내기
 ├── run_klotto.py            # 실행 진입점
 ├── klottogenerator.spec     # PyInstaller 설정
 └── README.md
@@ -101,13 +111,14 @@ lotto/
 | ⭐ 즐겨찾기 | 즐겨찾기 관리 |
 | 📈 당첨통계 | **역대 전체 당첨 통계** |
 | 🎯 당첨확인 | 내 번호 당첨 확인 |
+| 📷 QR 스캔 | 동행복권 QR 이미지/카메라 스캔 후 즉시 당첨 확인 |
 | 💾 데이터관리 | 데이터 내보내기/가져오기 |
 
 ## 📁 데이터 저장 경로
 
 ```
 ~/.lotto_generator/
-├── app.log              # 애플리케이션 로그
+├── settings.json        # 사용자 설정(테마/옵션)
 ├── favorites.json       # 즐겨찾기 데이터
 ├── history.json         # 생성 히스토리
 ├── winning_stats.json   # 당첨 통계 캐시
@@ -118,6 +129,12 @@ lotto/
 - macOS/Linux: `~/.lotto_generator/`
 
 ## 📝 변경 이력
+
+### v2.5 유지보수 (2026-02-27)
+- ✅ 기능 점검 이슈 전 항목 반영 (생성/QR/스레드/스크립트/문서 정합성)
+- ⚡ 생성/히스토리/통계 경로 성능 최적화
+- 🧩 스크립트 실행/DB 경로 일원화 (`python scripts/x.py`, `python -m scripts.x`)
+- 🔐 스크래핑 SSL 기본 검증 복원 (`--insecure` 옵션 제공)
 
 ### v2.5 (2026-02-04)
 - 🎉 **역대 전체 당첨 통계 기능 추가**
