@@ -1,5 +1,5 @@
 import random
-from typing import List, Set, Dict
+from typing import List, Set, Optional
 from klotto.core.stats import WinningStatsManager
 
 # ============================================================
@@ -11,8 +11,8 @@ class SmartNumberGenerator:
     def __init__(self, stats_manager: WinningStatsManager):
         self.stats_manager = stats_manager
     
-    def generate_smart_numbers(self, fixed_nums: Set[int] = None, 
-                                exclude_nums: Set[int] = None,
+    def generate_smart_numbers(self, fixed_nums: Optional[Set[int]] = None, 
+                                exclude_nums: Optional[Set[int]] = None,
                                 prefer_hot: bool = True,
                                 balance_mode: bool = True) -> List[int]:
         """스마트 번호 생성"""
@@ -106,8 +106,8 @@ class SmartNumberGenerator:
         return sorted(result)
     
     def generate_balanced_set(self, count: int = 5, 
-                               fixed_nums: Set[int] = None,
-                               exclude_nums: Set[int] = None) -> List[List[int]]:
+                               fixed_nums: Optional[Set[int]] = None,
+                               exclude_nums: Optional[Set[int]] = None) -> List[List[int]]:
         """균형 잡힌 세트 생성 (다양한 전략 조합)"""
         results = []
         strategies = [

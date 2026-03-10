@@ -2,6 +2,7 @@
 """
 Lotto Generator Pro v2.5 - PyInstaller Spec File (Onefile Mode)
 빌드 명령어: pyinstaller klottogenerator.spec
+엔트리 포인트: run_klotto.py
 """
 
 import sys
@@ -16,6 +17,7 @@ is_windows = sys.platform.startswith('win')
 # 빌드 마지막 단계(copyfile)가 실패한다.
 # 기본 출력 파일명을 변경해 충돌 가능성을 줄이고, 필요 시 name 값을 원래대로 조정 가능.
 output_name = 'LottoGeneratorPro_v25'
+entry_script = 'run_klotto.py'
 
 # =============================================================================
 # 경량화 설정
@@ -67,10 +69,10 @@ hidden_imports = [
 ]
 
 a = Analysis(
-    ['run_klotto.py'],
+    [entry_script],
     pathex=[str(project_path)],
     binaries=[],
-    # 로또 히스토리 DB 포함
+    # 로또 히스토리 DB 포함 (파일이 존재할 때만 번들에 추가)
     datas=[
         (str(project_path / 'data' / 'lotto_history.db'), 'data'),
     ] if (project_path / 'data' / 'lotto_history.db').exists() else [],

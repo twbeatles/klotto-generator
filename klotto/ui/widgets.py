@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QHBoxLayout, QVBoxLayout, QFrame, 
     QPushButton, QSpinBox, QToolTip
@@ -10,12 +10,6 @@ from PyQt6.QtGui import QFont, QPixmap, QImage, QPainter, QColor
 from klotto.utils import logger, ThemeManager
 from klotto.config import LOTTO_COLORS
 from klotto.net.client import LottoNetworkManager
-
-try:
-    import qrcode
-    HAS_QRCODE = True
-except ImportError:
-    HAS_QRCODE = False
 
 # ============================================================
 # 로또 공 위젯
@@ -107,8 +101,13 @@ class ResultRow(QWidget):
     favoriteClicked = pyqtSignal(list)
     copyClicked = pyqtSignal(list)
     
-    def __init__(self, index: int, numbers: List[int], analysis: Dict = None,
-                 matched_numbers: List[int] = None):
+    def __init__(
+        self,
+        index: int,
+        numbers: List[int],
+        analysis: Optional[Dict[str, Any]] = None,
+        matched_numbers: Optional[List[int]] = None,
+    ):
         super().__init__()
         self.index = index
         self.numbers = numbers
@@ -244,7 +243,9 @@ class ResultRow(QWidget):
         """번호를 클립보드에 복사"""
         from PyQt6.QtWidgets import QApplication
         nums_str = " ".join(f"{n:02d}" for n in self.numbers)
-        QApplication.clipboard().setText(nums_str)
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(nums_str)
         self.copyClicked.emit(self.numbers)
     
     def _apply_theme(self):

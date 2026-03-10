@@ -1,6 +1,7 @@
 import argparse
 import sqlite3
 import requests
+import urllib3
 import json
 import time
 try:
@@ -64,7 +65,7 @@ def fetch_draw(draw_no, verify_ssl=True):
         }
 
         if not verify_ssl:
-            requests.packages.urllib3.disable_warnings()
+            urllib3.disable_warnings()
 
         response = requests.get(url, headers=headers, timeout=10, verify=verify_ssl)
         

@@ -1,6 +1,7 @@
 import json
+import urllib.error
 import urllib.request
-from typing import Optional
+from typing import Any, Optional
 from PyQt6.QtCore import QThread, pyqtSignal, QObject
 from klotto.utils import logger
 from klotto.config import DHLOTTERY_API_URL, APP_CONFIG
@@ -13,7 +14,7 @@ class LottoApiWorker(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, draw_nos: list):
+    def __init__(self, draw_nos: list[int]):
         super().__init__()
         self.draw_nos = draw_nos
         self._is_cancelled = False
@@ -21,7 +22,7 @@ class LottoApiWorker(QThread):
     def cancel(self):
         self._is_cancelled = True
     
-    def _convert_new_format_to_old(self, new_data: dict) -> dict:
+    def _convert_new_format_to_old(self, new_data: dict[str, Any]) -> Optional[dict[str, Any]]:
         """새 API 응답 형식을 기존 형식으로 변환"""
         # 새 API 형식:
         # { "data": { "list": [{ "ltEpsd": 1205, "tm1WnNo": 1, ... }] } }
@@ -82,7 +83,7 @@ class LottoApiWorker(QThread):
                 
                 logger.info(f"Requesting draw #{draw_no} from new API")
                 
-                with urllib.request.urlopen(req, timeout=APP_CONFIG['API_TIMEOUT']) as response:
+                with urllib.request.urlopen(req, timeout=int(APP_CONFIG['API_TIMEOUT'])) as response:
                     raw_data = response.read().decode('utf-8')
                     
                     if self._is_cancelled:
@@ -145,7 +146,7 @@ class LottoNetworkManager(QObject):
         """단일 회차 정보 요청"""
         self.fetch_draws([draw_no])
         
-    def fetch_draws(self, draw_nos: list):
+    def fetch_draws(self, draw_nos: list[int]):
         """여러 회차 정보 요청 (순차적)"""
         # 기존 워커가 실행 중이면 취소
         if self._current_worker and self._current_worker.isRunning():

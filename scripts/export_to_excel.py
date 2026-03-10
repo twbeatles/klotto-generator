@@ -4,6 +4,7 @@ DB 데이터를 엑셀 파일로 내보내는 스크립트
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 try:
     from scripts.common import resolve_db_path
 except ModuleNotFoundError:
@@ -28,7 +29,7 @@ except ImportError:
 DB_PATH = resolve_db_path()
 DATA_DIR = DB_PATH.parent
 
-def export_to_excel(output_path: Path = None):
+def export_to_excel(output_path: Optional[Path] = None):
     """Export database to Excel file."""
     if not DB_PATH.exists():
         print(f"데이터베이스를 찾을 수 없습니다: {DB_PATH}")
@@ -59,6 +60,9 @@ def export_to_excel(output_path: Path = None):
         # Create workbook
         wb = openpyxl.Workbook()
         ws = wb.active
+        if ws is None:
+            print("워크시트를 생성할 수 없습니다.")
+            return False
         ws.title = "로또 당첨번호"
 
         # Define styles

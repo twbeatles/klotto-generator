@@ -1,6 +1,7 @@
 import json
 import datetime
 import os
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 from klotto.config import APP_CONFIG
 from klotto.utils import logger
@@ -12,7 +13,8 @@ class FavoritesManager:
     """즐겨찾기 번호 관리"""
     
     def __init__(self):
-        self.favorites_file = APP_CONFIG['FAVORITES_FILE']
+        favorites_file = APP_CONFIG.get('FAVORITES_FILE')
+        self.favorites_file: Optional[Path] = favorites_file if isinstance(favorites_file, Path) else None
         self.favorites: List[Dict] = []
         self._favorite_keys: Set[Tuple[int, ...]] = set()
         self._load()
@@ -64,9 +66,15 @@ class FavoritesManager:
     
     def _load(self):
         """파일에서 즐겨찾기 로드"""
+        favorites_file = self.favorites_file
+        if favorites_file is None:
+            self.favorites = []
+            self._rebuild_index()
+            return
+
         try:
-            if self.favorites_file and self.favorites_file.exists():
-                with open(self.favorites_file, 'r', encoding='utf-8') as f:
+            if favorites_file.exists():
+                with open(favorites_file, 'r', encoding='utf-8') as f:
                     self.favorites = json.load(f)
                 logger.info(f"Loaded {len(self.favorites)} favorites")
         except Exception as e:
@@ -77,24 +85,26 @@ class FavoritesManager:
     
     def _save(self):
         """즐겨찾기를 파일에 저장 (Atomic)"""
-        if not self.favorites_file:
+        favorites_file = self.favorites_file
+        if favorites_file is None:
             return
 
+        temp_file: Optional[Path] = None
         try:
-            self.favorites_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.favorites_file.with_suffix('.tmp')
+            favorites_file.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = favorites_file.with_suffix('.tmp')
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.favorites, f, ensure_ascii=False, indent=2)
             
-            if self.favorites_file.exists():
-                os.replace(temp_file, self.favorites_file)
+            if favorites_file.exists():
+                os.replace(temp_file, favorites_file)
             else:
-                os.rename(temp_file, self.favorites_file)
+                os.rename(temp_file, favorites_file)
             logger.info(f"Saved {len(self.favorites)} favorites")
         except Exception as e:
             logger.error(f"Failed to save favorites: {e}")
             try:
-                if 'temp_file' in locals() and temp_file.exists():
+                if temp_file and temp_file.exists():
                     temp_file.unlink()
             except: pass
     

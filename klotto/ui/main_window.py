@@ -7,10 +7,10 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QSpinBox, QCheckBox, QFrame, QScrollArea, 
     QMessageBox, QSystemTrayIcon, QMenu, QGroupBox, QGridLayout,
-    QLineEdit,
+    QLineEdit, QStyle,
     QApplication, QDialog
 )
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QThread
 from PyQt6.QtGui import QFont, QAction, QCloseEvent
 
 from klotto.config import APP_CONFIG
@@ -35,6 +35,7 @@ class LottoApp(QWidget):
     def __init__(self):
         super().__init__()
         self.generated_sets: List[List[int]] = []
+        self._sync_worker: Optional[QThread] = None
         
         # 매니저 초기화
         self.favorites_manager = FavoritesManager()
@@ -296,14 +297,18 @@ class LottoApp(QWidget):
         self.tray_icon = QSystemTrayIcon(self)
         # 아이콘 설정 필요 (임시로 표준 아이콘 사용)
         style = self.style()
-        icon = style.standardIcon(style.StandardPixmap.SP_ArrowUp) # 임시
+        if style is None:
+            return
+        icon = style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp) # 임시
         self.tray_icon.setIcon(icon)
         
         menu = QMenu()
         restore_action = QAction("열기", self)
         restore_action.triggered.connect(self.showNormal)
         quit_action = QAction("종료", self)
-        quit_action.triggered.connect(QApplication.instance().quit)
+        app = QApplication.instance()
+        if app is not None:
+            quit_action.triggered.connect(app.quit)
         
         menu.addAction(restore_action)
         menu.addSeparator()
@@ -532,16 +537,23 @@ class LottoApp(QWidget):
             self.results_container.update()
             
         # 스크롤 최하단으로 이동
-        QTimer.singleShot(100, lambda: self.scroll_area.verticalScrollBar().setValue(
-            self.scroll_area.verticalScrollBar().maximum()
-        ))
+        QTimer.singleShot(100, self._scroll_results_to_bottom)
+
+    def _scroll_results_to_bottom(self):
+        bar = self.scroll_area.verticalScrollBar()
+        if bar is None:
+            return
+        bar.setValue(bar.maximum())
     
     def clear_results(self):
         """결과 초기화"""
         while self.results_layout.count():
             child = self.results_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            if child is None:
+                continue
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
         
         self.placeholder_label = QLabel("번호 생성하기 버튼을 눌러주세요.\n행운의 번호가 기다리고 있습니다!")
         self.placeholder_label.setObjectName("placeholderLabel")
@@ -620,7 +632,7 @@ class LottoApp(QWidget):
         dialog.exec()
 
 
-    def closeEvent(self, event: QCloseEvent):
+    def closeEvent(self, a0: Optional[QCloseEvent]):
         """종료 시 처리"""
         try:
             sync_worker = getattr(self, "_sync_worker", None)
@@ -636,4 +648,5 @@ class LottoApp(QWidget):
         except Exception as e:
             logger.warning(f"Close cleanup error: {e}")
 
-        event.accept()
+        if a0 is not None:
+            a0.accept()

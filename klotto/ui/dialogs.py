@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QApplication
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPixmap, QImage
+from PyQt6.QtGui import QPixmap, QImage, QCloseEvent
 
 from klotto.utils import logger, ThemeManager
 from klotto.ui.widgets import LottoBall
@@ -16,6 +16,7 @@ from klotto.data.history import HistoryManager
 from klotto.core.stats import WinningStatsManager
 from klotto.data.exporter import DataExporter
 
+qrcode = None
 try:
     import qrcode
     HAS_QRCODE = True
@@ -83,13 +84,17 @@ class QRCodeDialog(QDialog):
         self.setLayout(layout)
     
     def _generate_qr(self):
+        if not HAS_QRCODE or qrcode is None:
+            self.qr_label.setText("qrcode 라이브러리가\n설치되지 않았습니다.")
+            return
+
         try:
             # 텍스트 형식으로 생성 (단순 복사용)
             data = f"Lotto 6/45 Generator\nNumbers: {self.numbers}"
-            
+             
             qr = qrcode.QRCode(
                 version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                error_correction=1,
                 box_size=10,
                 border=2,
             )
@@ -101,7 +106,7 @@ class QRCodeDialog(QDialog):
             # PIL 이미지를 QPixmap으로 변환
             import io
             buffer = io.BytesIO()
-            img.save(buffer, format="PNG")
+            img.save(buffer, "PNG")
             qimg = QImage.fromData(buffer.getvalue())
             pixmap = QPixmap.fromImage(qimg)
             
@@ -415,9 +420,20 @@ class HistoryDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             nums_str = " ".join(f"{n:02d}" for n in numbers)
-            QApplication.clipboard().setText(nums_str)
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                QMessageBox.warning(self, "오류", "클립보드를 사용할 수 없습니다.")
+                return
+            clipboard.setText(nums_str)
             QMessageBox.information(self, "복사 완료", f"번호가 복사되었습니다:\n{nums_str}")
         else:
             QMessageBox.warning(self, "선택 필요", "복사할 항목을 선택하세요.")
@@ -426,7 +442,14 @@ class HistoryDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             dialog = QRCodeDialog(numbers, self)
             dialog.exec()
         else:
@@ -635,9 +658,20 @@ class FavoritesDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             nums_str = " ".join(f"{n:02d}" for n in numbers)
-            QApplication.clipboard().setText(nums_str)
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                QMessageBox.warning(self, "오류", "클립보드를 사용할 수 없습니다.")
+                return
+            clipboard.setText(nums_str)
             QMessageBox.information(self, "복사 완료", f"번호가 클립보드에 복사되었습니다:\n{nums_str}")
         else:
             QMessageBox.warning(self, "선택 필요", "복사할 항목을 선택하세요.")
@@ -664,7 +698,14 @@ class FavoritesDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             dialog = QRCodeDialog(numbers, self)
             dialog.exec()
         else:
@@ -980,7 +1021,7 @@ class WinningCheckDialog(QDialog):
         self.stats_manager = stats_manager
         self.qr_payload = qr_payload
         self._pending_qr_payload: Optional[Dict[str, Any]] = None
-        self._qr_network_manager = None
+        self._qr_network_manager: Optional["LottoNetworkManager"] = None
 
         self.setWindowTitle("🎯 당첨 확인")
         self.setMinimumSize(650, 500)
@@ -1103,8 +1144,11 @@ class WinningCheckDialog(QDialog):
     def _clear_results(self):
         while self.result_inner_layout.count():
             item = self.result_inner_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
 
     def _add_info_result(self, text: str, color: Optional[str] = None):
         t = ThemeManager.get_theme()
@@ -1282,7 +1326,11 @@ class WinningCheckDialog(QDialog):
         self._ensure_qr_network_manager()
         self._add_info_result(f"{draw_no}회차 데이터를 가져오는 중입니다...")
         self.check_btn.setEnabled(False)
-        self._qr_network_manager.fetch_draw(draw_no)
+        manager = self._qr_network_manager
+        if manager is None:
+            self._on_qr_draw_error("QR 네트워크 매니저를 초기화하지 못했습니다.")
+            return
+        manager.fetch_draw(draw_no)
 
     def _ensure_qr_network_manager(self):
         if self._qr_network_manager:
@@ -1367,10 +1415,11 @@ class WinningCheckDialog(QDialog):
 
         self.check_btn.setEnabled(True)
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0: Optional[QCloseEvent]):
         if self._qr_network_manager:
             self._qr_network_manager.cancel()
-        super().closeEvent(event)
+        if a0 is not None:
+            super().closeEvent(a0)
     
     def _apply_theme(self):
         t = ThemeManager.get_theme()

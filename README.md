@@ -41,7 +41,7 @@
 ## 🛠️ 설치 및 실행
 
 ### 요구 사항
-- Python 3.8 이상
+- Python 3.10 이상
 - 필수 패키지: `PyQt6`, `requests`, `qrcode`, `Pillow`, `numpy`, `opencv-python`, `pyzbar`
 - 선택 패키지: `openpyxl` (엑셀 내보내기 스크립트 사용 시)
 
@@ -62,10 +62,24 @@ pyinstaller klottogenerator.spec
 ```
 빌드된 실행 파일은 `dist/LottoGeneratorPro_v25.exe` (단일 파일)로 생성됩니다.
 
+## 🔎 개발 품질 체크
+
+### Pylance/Pyright
+저장소 기본 타입 체크 모드는 `standard`입니다.
+
+```bash
+pyright --outputjson
+```
+
+### 컴파일 검증
+```bash
+python -m compileall klotto scripts run_klotto.py klottogenerator.py
+```
+
 ## 📁 프로젝트 구조
 
 ```
-lotto/
+klotto-generator/
 ├── klotto/                  # 메인 패키지
 │   ├── config.py           # 설정 및 상수
 │   ├── utils.py            # 유틸리티 및 테마 관리
@@ -83,7 +97,7 @@ lotto/
 │       ├── dialogs.py      # 다이얼로그
 │       ├── main_window.py  # 메인 윈도우
 │       └── widgets.py      # 위젯
-├── data/                    # 로또 역대 당첨 DB
+├── data/                    # 로또 역대 당첨 DB (생성/동봉 시)
 │   └── lotto_history.db    # SQLite DB (1회~현재)
 ├── scripts/                 # 유틸리티 스크립트
 │   ├── common.py                 # 스크립트 공통 경로/DB resolver
@@ -92,7 +106,12 @@ lotto/
 │   ├── scrape_lotto_history.py   # DB 스크래핑
 │   └── export_to_excel.py        # 엑셀 내보내기
 ├── run_klotto.py            # 실행 진입점
+├── klottogenerator.py       # 레거시 단일 파일 버전 (호환 유지)
 ├── klottogenerator.spec     # PyInstaller 설정
+├── pyrightconfig.json       # Pylance/Pyright 설정
+├── .editorconfig            # UTF-8/에디터 규칙
+├── .vscode/settings.json    # 워크스페이스 분석/인코딩 설정
+├── .gitignore               # 빌드/캐시/로컬 산출물 제외
 └── README.md
 ```
 
@@ -129,6 +148,13 @@ lotto/
 - macOS/Linux: `~/.lotto_generator/`
 
 ## 📝 변경 이력
+
+### v2.5 유지보수 (2026-03-10)
+- ✅ Pylance/Pyright 전수 정리 완료 (`errorCount: 0`)
+- 🔒 Optional 반환 API 가드 및 타입 힌트 정합성 강화
+- 🧹 `__pycache__/*.pyc` 추적 제거 및 `.gitignore` 강화
+- 🔤 UTF-8 인코딩 정책 고정 (`.editorconfig`, `.vscode/settings.json`)
+- 📘 문서/빌드 설정(`README`, `spec`) 정합성 업데이트
 
 ### v2.5 유지보수 (2026-02-27)
 - ✅ 기능 점검 이슈 전 항목 반영 (생성/QR/스레드/스크립트/문서 정합성)

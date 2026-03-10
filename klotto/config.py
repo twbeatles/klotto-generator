@@ -8,7 +8,12 @@ def _get_base_path() -> Path:
     """PyInstaller 번들 또는 개발 환경의 기본 경로 반환"""
     if getattr(sys, 'frozen', False):
         # PyInstaller 번들 (onefile 모드)
-        return Path(sys._MEIPASS)
+        meipass = getattr(sys, "_MEIPASS", None)
+        if isinstance(meipass, str):
+            return Path(meipass)
+        if isinstance(meipass, Path):
+            return meipass
+        return Path(".").resolve()
     else:
         # 개발 환경
         return Path(__file__).resolve().parent.parent

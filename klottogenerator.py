@@ -11,7 +11,7 @@ import urllib.request
 import urllib.error
 import logging
 import os
-from typing import List, Set, Dict, Optional, Tuple
+from typing import List, Set, Dict, Optional, Tuple, Any
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -24,11 +24,12 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import (
     QFont, QColor, QShortcut, QKeySequence, QPainter,
-    QLinearGradient, QBrush, QPen, QRadialGradient, QPixmap, QImage
+    QLinearGradient, QBrush, QPen, QRadialGradient, QPixmap, QImage, QCloseEvent
 )
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPropertyAnimation, QEasingCurve, QSize, QUrl
 
+qrcode = None
 try:
     import qrcode
     from PIL import ImageQt
@@ -498,7 +499,9 @@ class LottoNetworkManager(QWidget):
         
         logger.info(f"Requesting draw #{draw_no}")
         self._current_reply = self.manager.get(request)
-        self._current_reply.setProperty('draw_no', draw_no)
+        reply_handle = self._current_reply
+        if reply_handle is not None:
+            reply_handle.setProperty('draw_no', draw_no)
         
     def cancel(self):
         """요청 취소"""
@@ -527,7 +530,7 @@ class LottoNetworkManager(QWidget):
             
         try:
             data_bytes = reply.readAll()
-            data_str = str(data_bytes, 'utf-8')
+            data_str = data_bytes.data().decode("utf-8")
             data = json.loads(data_str)
             
             if data.get('returnValue') == 'success':
@@ -551,15 +554,21 @@ class WinningStatsManager:
     """역대 당첨 번호 통계 관리"""
     
     def __init__(self):
-        self.stats_file = APP_CONFIG['WINNING_STATS_FILE']
+        stats_file = APP_CONFIG.get('WINNING_STATS_FILE')
+        self.stats_file: Optional[Path] = stats_file if isinstance(stats_file, Path) else None
         self.winning_data: List[Dict] = []
         self._load()
     
     def _load(self):
         """파일에서 통계 데이터 로드"""
+        stats_file = self.stats_file
+        if stats_file is None:
+            self.winning_data = []
+            return
+
         try:
-            if self.stats_file.exists():
-                with open(self.stats_file, 'r', encoding='utf-8') as f:
+            if stats_file.exists():
+                with open(stats_file, 'r', encoding='utf-8') as f:
                     self.winning_data = json.load(f)
                 logger.info(f"Loaded {len(self.winning_data)} winning records")
         except Exception as e:
@@ -568,21 +577,26 @@ class WinningStatsManager:
     
     def _save(self):
         """통계 데이터 저장 (Atomic)"""
+        stats_file = self.stats_file
+        if stats_file is None:
+            return
+
+        temp_file: Optional[Path] = None
         try:
-            self.stats_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.stats_file.with_suffix('.tmp')
+            stats_file.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = stats_file.with_suffix('.tmp')
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.winning_data, f, ensure_ascii=False, indent=2)
             # Atomic replacement
-            if self.stats_file.exists():
-                os.replace(temp_file, self.stats_file)
+            if stats_file.exists():
+                os.replace(temp_file, stats_file)
             else:
-                os.rename(temp_file, self.stats_file)
+                os.rename(temp_file, stats_file)
         except Exception as e:
             logger.error(f"Failed to save winning stats: {e}")
             # Clean up temp file if exists
             try:
-                if 'temp_file' in locals() and temp_file.exists():
+                if temp_file and temp_file.exists():
                     temp_file.unlink()
             except: pass
     
@@ -682,8 +696,8 @@ class SmartNumberGenerator:
     def __init__(self, stats_manager: WinningStatsManager):
         self.stats_manager = stats_manager
     
-    def generate_smart_numbers(self, fixed_nums: Set[int] = None, 
-                                exclude_nums: Set[int] = None,
+    def generate_smart_numbers(self, fixed_nums: Optional[Set[int]] = None, 
+                                exclude_nums: Optional[Set[int]] = None,
                                 prefer_hot: bool = True,
                                 balance_mode: bool = True) -> List[int]:
         """스마트 번호 생성"""
@@ -777,8 +791,8 @@ class SmartNumberGenerator:
         return sorted(result)
     
     def generate_balanced_set(self, count: int = 5, 
-                               fixed_nums: Set[int] = None,
-                               exclude_nums: Set[int] = None) -> List[List[int]]:
+                               fixed_nums: Optional[Set[int]] = None,
+                               exclude_nums: Optional[Set[int]] = None) -> List[List[int]]:
         """균형 잡힌 세트 생성 (다양한 전략 조합)"""
         results = []
         strategies = [
@@ -869,15 +883,21 @@ class FavoritesManager:
     """즐겨찾기 번호 관리"""
     
     def __init__(self):
-        self.favorites_file = APP_CONFIG['FAVORITES_FILE']
+        favorites_file = APP_CONFIG.get('FAVORITES_FILE')
+        self.favorites_file: Optional[Path] = favorites_file if isinstance(favorites_file, Path) else None
         self.favorites: List[Dict] = []
         self._load()
     
     def _load(self):
         """파일에서 즐겨찾기 로드"""
+        favorites_file = self.favorites_file
+        if favorites_file is None:
+            self.favorites = []
+            return
+
         try:
-            if self.favorites_file.exists():
-                with open(self.favorites_file, 'r', encoding='utf-8') as f:
+            if favorites_file.exists():
+                with open(favorites_file, 'r', encoding='utf-8') as f:
                     self.favorites = json.load(f)
                 logger.info(f"Loaded {len(self.favorites)} favorites")
         except Exception as e:
@@ -886,21 +906,26 @@ class FavoritesManager:
     
     def _save(self):
         """즐겨찾기를 파일에 저장 (Atomic)"""
+        favorites_file = self.favorites_file
+        if favorites_file is None:
+            return
+
+        temp_file: Optional[Path] = None
         try:
-            self.favorites_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.favorites_file.with_suffix('.tmp')
+            favorites_file.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = favorites_file.with_suffix('.tmp')
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.favorites, f, ensure_ascii=False, indent=2)
             
-            if self.favorites_file.exists():
-                os.replace(temp_file, self.favorites_file)
+            if favorites_file.exists():
+                os.replace(temp_file, favorites_file)
             else:
-                os.rename(temp_file, self.favorites_file)
+                os.rename(temp_file, favorites_file)
             logger.info(f"Saved {len(self.favorites)} favorites")
         except Exception as e:
             logger.error(f"Failed to save favorites: {e}")
             try:
-                if 'temp_file' in locals() and temp_file.exists():
+                if temp_file and temp_file.exists():
                     temp_file.unlink()
             except: pass
     
@@ -934,15 +959,21 @@ class HistoryManager:
     """생성된 번호 히스토리 관리"""
     
     def __init__(self):
-        self.history_file = APP_CONFIG['HISTORY_FILE']
+        history_file = APP_CONFIG.get('HISTORY_FILE')
+        self.history_file: Optional[Path] = history_file if isinstance(history_file, Path) else None
         self.history: List[Dict] = []
         self._load()
     
     def _load(self):
         """파일에서 히스토리 로드"""
+        history_file = self.history_file
+        if history_file is None:
+            self.history = []
+            return
+
         try:
-            if self.history_file.exists():
-                with open(self.history_file, 'r', encoding='utf-8') as f:
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
                 logger.info(f"Loaded {len(self.history)} history entries")
         except Exception as e:
@@ -951,20 +982,25 @@ class HistoryManager:
     
     def _save(self):
         """히스토리를 파일에 저장 (Atomic)"""
+        history_file = self.history_file
+        if history_file is None:
+            return
+
+        temp_file: Optional[Path] = None
         try:
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.history_file.with_suffix('.tmp')
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = history_file.with_suffix('.tmp')
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f, ensure_ascii=False, indent=2)
                 
-            if self.history_file.exists():
-                os.replace(temp_file, self.history_file)
+            if history_file.exists():
+                os.replace(temp_file, history_file)
             else:
-                os.rename(temp_file, self.history_file)
+                os.rename(temp_file, history_file)
         except Exception as e:
             logger.error(f"Failed to save history: {e}")
             try:
-                if 'temp_file' in locals() and temp_file.exists():
+                if temp_file and temp_file.exists():
                     temp_file.unlink()
             except: pass
     
@@ -1115,8 +1151,13 @@ class ResultRow(QWidget):
     favoriteClicked = pyqtSignal(list)
     copyClicked = pyqtSignal(list)
     
-    def __init__(self, index: int, numbers: List[int], analysis: Dict = None,
-                 matched_numbers: List[int] = None):
+    def __init__(
+        self,
+        index: int,
+        numbers: List[int],
+        analysis: Optional[Dict[str, Any]] = None,
+        matched_numbers: Optional[List[int]] = None,
+    ):
         super().__init__()
         self.index = index
         self.numbers = numbers
@@ -1273,7 +1314,9 @@ class ResultRow(QWidget):
     def _copy_numbers(self):
         """번호를 클립보드에 복사"""
         nums_str = " ".join(f"{n:02d}" for n in self.numbers)
-        QApplication.clipboard().setText(nums_str)
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(nums_str)
         self.copyClicked.emit(self.numbers)
     
     def _show_qr(self):
@@ -1463,14 +1506,23 @@ class WinningInfoWidget(QWidget):
         self._clear_layout(self.numbers_layout)
         self._clear_layout(self.prize_layout)
         
-        draw_date = data.get('drwNoDate', '')
-        draw_no = data.get('drwNo', 0)
+        draw_date_raw = data.get('drwNoDate', '')
+        draw_date = draw_date_raw if isinstance(draw_date_raw, str) else str(draw_date_raw)
+        try:
+            draw_no = int(data.get('drwNo', 0))
+        except (TypeError, ValueError):
+            draw_no = 0
         
-        numbers = [
-            data.get('drwtNo1'), data.get('drwtNo2'), data.get('drwtNo3'),
-            data.get('drwtNo4'), data.get('drwtNo5'), data.get('drwtNo6')
-        ]
-        bonus = data.get('bnusNo')
+        numbers: List[int] = []
+        for i in range(1, 7):
+            try:
+                numbers.append(int(data.get(f'drwtNo{i}', 0)))
+            except (TypeError, ValueError):
+                numbers.append(0)
+        try:
+            bonus = int(data.get('bnusNo', 0))
+        except (TypeError, ValueError):
+            bonus = 0
         
         t = ThemeManager.get_theme()
         
@@ -1524,20 +1576,27 @@ class WinningInfoWidget(QWidget):
     def _clear_layout(self, layout):
         while layout.count():
             child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            if child is None:
+                continue
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
     
     def get_winning_numbers(self) -> Tuple[List[int], int]:
         """현재 로드된 당첨 번호 반환"""
         if not self.current_data:
             return [], 0
         
-        numbers = [
-            self.current_data.get('drwtNo1'), self.current_data.get('drwtNo2'),
-            self.current_data.get('drwtNo3'), self.current_data.get('drwtNo4'),
-            self.current_data.get('drwtNo5'), self.current_data.get('drwtNo6')
-        ]
-        bonus = self.current_data.get('bnusNo', 0)
+        numbers: List[int] = []
+        for i in range(1, 7):
+            try:
+                numbers.append(int(self.current_data.get(f'drwtNo{i}', 0)))
+            except (TypeError, ValueError):
+                numbers.append(0)
+        try:
+            bonus = int(self.current_data.get('bnusNo', 0))
+        except (TypeError, ValueError):
+            bonus = 0
         return numbers, bonus
 
 
@@ -1602,14 +1661,18 @@ class QRCodeDialog(QDialog):
         self.setLayout(layout)
     
     def _generate_qr(self):
+        if not HAS_QRCODE or qrcode is None:
+            self.qr_label.setText("qrcode 라이브러리가\n설치되지 않았습니다.")
+            return
+
         try:
             # 텍스트 형식으로 생성 (단순 복사용)
             # 동행복권 URL 형식은 복잡하고 유효성 검증이 있어 단순 텍스트가 안전함
             data = f"Lotto 6/45 Generator\nNumbers: {self.numbers}"
-            
+             
             qr = qrcode.QRCode(
                 version=1,
-                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                error_correction=1,
                 box_size=10,
                 border=2,
             )
@@ -1622,7 +1685,7 @@ class QRCodeDialog(QDialog):
             # ImageQt를 직접 사용하면 일부 환경에서 에러 발생 가능성 있어 안전하게 변환
             import io
             buffer = io.BytesIO()
-            img.save(buffer, format="PNG")
+            img.save(buffer, "PNG")
             qimg = QImage.fromData(buffer.getvalue())
             pixmap = QPixmap.fromImage(qimg)
             
@@ -1936,9 +1999,20 @@ class HistoryDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             nums_str = " ".join(f"{n:02d}" for n in numbers)
-            QApplication.clipboard().setText(nums_str)
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                QMessageBox.warning(self, "오류", "클립보드를 사용할 수 없습니다.")
+                return
+            clipboard.setText(nums_str)
             QMessageBox.information(self, "복사 완료", f"번호가 복사되었습니다:\n{nums_str}")
         else:
             QMessageBox.warning(self, "선택 필요", "복사할 항목을 선택하세요.")
@@ -1947,7 +2021,14 @@ class HistoryDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             dialog = QRCodeDialog(numbers, self)
             dialog.exec()
         else:
@@ -2139,9 +2220,20 @@ class FavoritesDialog(QDialog):
         row = self.list_widget.currentRow()
         if row >= 0:
             item = self.list_widget.item(row)
-            numbers = item.data(Qt.ItemDataRole.UserRole)
+            if item is None:
+                QMessageBox.warning(self, "선택 필요", "선택한 항목을 찾을 수 없습니다.")
+                return
+            raw_numbers = item.data(Qt.ItemDataRole.UserRole)
+            if not isinstance(raw_numbers, list):
+                QMessageBox.warning(self, "오류", "번호 데이터 형식이 올바르지 않습니다.")
+                return
+            numbers = [int(n) for n in raw_numbers]
             nums_str = " ".join(f"{n:02d}" for n in numbers)
-            QApplication.clipboard().setText(nums_str)
+            clipboard = QApplication.clipboard()
+            if clipboard is None:
+                QMessageBox.warning(self, "오류", "클립보드를 사용할 수 없습니다.")
+                return
+            clipboard.setText(nums_str)
             QMessageBox.information(self, "복사 완료", f"번호가 클립보드에 복사되었습니다:\n{nums_str}")
         else:
             QMessageBox.warning(self, "선택 필요", "복사할 항목을 선택하세요.")
@@ -2438,8 +2530,11 @@ class WinningCheckDialog(QDialog):
         # 결과 초기화
         while self.result_inner_layout.count():
             item = self.result_inner_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            if item is None:
+                continue
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
         
         t = ThemeManager.get_theme()
         
@@ -3160,10 +3255,10 @@ class LottoApp(QWidget):
         
         # 통계에 당첨 데이터 저장
         try:
-            draw_no = data.get('drwNo')
-            numbers = [data.get(f'drwtNo{i}') for i in range(1, 7)]
-            bonus = data.get('bnusNo')
-            if draw_no and all(numbers) and bonus:
+            draw_no = int(data.get('drwNo', 0))
+            numbers = [int(data.get(f'drwtNo{i}', 0)) for i in range(1, 7)]
+            bonus = int(data.get('bnusNo', 0))
+            if draw_no > 0 and all(numbers) and bonus > 0:
                 self.stats_manager.add_winning_data(draw_no, numbers, bonus)
         except Exception as e:
             logger.error(f"Failed to save winning data: {e}")
@@ -3277,8 +3372,11 @@ class LottoApp(QWidget):
         self.generated_sets.clear()
         while self.result_layout.count():
             child = self.result_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            if child is None:
+                continue
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
         
         self.placeholder_label = QLabel("'번호 생성' 버튼을 클릭하여 행운의 번호를 받아보세요!")
         self.placeholder_label.setObjectName("placeholderLabel")
@@ -3447,10 +3545,12 @@ class LottoApp(QWidget):
     def copy_to_clipboard(self):
         if not self.generated_sets:
             return
-        QApplication.clipboard().setText(self._get_text_data())
+        clipboard = QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self._get_text_data())
         self.status_bar.showMessage("📋 클립보드에 복사됨")
     
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         """앱 종료 시 리소스 정리"""
         logger.info("Application closing...")
         
@@ -3458,7 +3558,8 @@ class LottoApp(QWidget):
         if hasattr(self.winning_info_widget, 'network_manager'):
             self.winning_info_widget.network_manager.cancel()
         
-        event.accept()
+        if a0 is not None:
+            a0.accept()
 
 
 # ============================================================

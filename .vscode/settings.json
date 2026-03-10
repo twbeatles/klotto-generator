@@ -1,0 +1,6 @@
+{
+  "python.analysis.typeCheckingMode": "standard",
+  "python.analysis.diagnosticMode": "workspace",
+  "files.encoding": "utf8",
+  "files.autoGuessEncoding": false
+}

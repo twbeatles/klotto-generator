@@ -1,7 +1,6 @@
 import json
-import os
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from ..config import APP_CONFIG
 from ..utils import logger
 
@@ -9,7 +8,8 @@ class SettingsManager:
     """사용자 설정 관리자 (윈도우 크기, 테마, 옵션 등)"""
     
     def __init__(self):
-        self.settings_file = APP_CONFIG.get('SETTINGS_FILE')
+        settings_file = APP_CONFIG.get('SETTINGS_FILE')
+        self.settings_file: Optional[Path] = settings_file if isinstance(settings_file, Path) else None
         self.settings: Dict[str, Any] = {
             'theme': 'light',
             'window_geometry': None,
@@ -27,9 +27,13 @@ class SettingsManager:
             self._load()
     
     def _load(self):
+        settings_file = self.settings_file
+        if settings_file is None:
+            return
+
         try:
-            if self.settings_file.exists():
-                with open(self.settings_file, 'r', encoding='utf-8') as f:
+            if settings_file.exists():
+                with open(settings_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     # 병합 (누락된 키 보존)
                     self.settings.update(data)
@@ -41,10 +45,13 @@ class SettingsManager:
             logger.error(f"Failed to load settings: {e}")
 
     def save(self):
-        if not self.settings_file: return
+        settings_file = self.settings_file
+        if settings_file is None:
+            return
+
         try:
-            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.settings_file, 'w', encoding='utf-8') as f:
+            settings_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(settings_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=2)
             logger.info("Settings saved")
         except Exception as e:

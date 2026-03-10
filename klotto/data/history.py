@@ -1,6 +1,7 @@
 import json
 import datetime
 import os
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 from klotto.config import APP_CONFIG
 from klotto.utils import logger
@@ -12,7 +13,8 @@ class HistoryManager:
     """생성된 번호 히스토리 관리"""
     
     def __init__(self):
-        self.history_file = APP_CONFIG['HISTORY_FILE']
+        history_file = APP_CONFIG.get('HISTORY_FILE')
+        self.history_file: Optional[Path] = history_file if isinstance(history_file, Path) else None
         self.history: List[Dict] = []
         self._history_keys: Set[Tuple[int, ...]] = set()
         self._stats_cache: Optional[Dict] = None
@@ -70,9 +72,15 @@ class HistoryManager:
     
     def _load(self):
         """파일에서 히스토리 로드"""
+        history_file = self.history_file
+        if history_file is None:
+            self.history = []
+            self._rebuild_index()
+            return
+
         try:
-            if self.history_file and self.history_file.exists():
-                with open(self.history_file, 'r', encoding='utf-8') as f:
+            if history_file.exists():
+                with open(history_file, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)
                 logger.info(f"Loaded {len(self.history)} history entries")
         except Exception as e:
@@ -83,23 +91,25 @@ class HistoryManager:
     
     def _save(self):
         """히스토리를 파일에 저장 (Atomic)"""
-        if not self.history_file:
+        history_file = self.history_file
+        if history_file is None:
             return
 
+        temp_file: Optional[Path] = None
         try:
-            self.history_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.history_file.with_suffix('.tmp')
+            history_file.parent.mkdir(parents=True, exist_ok=True)
+            temp_file = history_file.with_suffix('.tmp')
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f, ensure_ascii=False, indent=2)
                 
-            if self.history_file.exists():
-                os.replace(temp_file, self.history_file)
+            if history_file.exists():
+                os.replace(temp_file, history_file)
             else:
-                os.rename(temp_file, self.history_file)
+                os.rename(temp_file, history_file)
         except Exception as e:
             logger.error(f"Failed to save history: {e}")
             try:
-                if 'temp_file' in locals() and temp_file.exists():
+                if temp_file and temp_file.exists():
                     temp_file.unlink()
             except: pass
     
@@ -112,13 +122,13 @@ class HistoryManager:
         if key in self._history_keys:
             return False
 
-            self.history.insert(0, {
-                'numbers': list(key),
-                'created_at': datetime.datetime.now().isoformat()
-            })
-            self._history_keys.add(key)
-            self._trim_to_max()
-            self._stats_cache = None
+        self.history.insert(0, {
+            'numbers': list(key),
+            'created_at': datetime.datetime.now().isoformat()
+        })
+        self._history_keys.add(key)
+        self._trim_to_max()
+        self._stats_cache = None
 
         if save:
             self._save()

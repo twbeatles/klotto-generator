@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Callable, Optional
 
 try:
     import cv2
@@ -18,6 +18,7 @@ from klotto.utils import logger, ThemeManager
 from klotto.qr_utils import parse_lotto_qr_url
 
 # Try importing pyzbar
+decode: Optional[Callable[[Any], Any]] = None
 try:
     from pyzbar.pyzbar import decode
     HAS_PYZBAR = True
@@ -39,6 +40,9 @@ class CameraWorker(QThread):
         self.running = False
 
     def run(self):
+        if cv2 is None:
+            return
+
         self.running = True
         cap = cv2.VideoCapture(self.camera_index)
         
@@ -165,7 +169,7 @@ class QRCodeScannerDialog(QDialog):
             self.cam_btn.setText("⏹ 카메라 중지")
 
     def _update_frame(self, frame):
-        if not HAS_CV2:
+        if not HAS_CV2 or cv2 is None:
             return
 
         # Convert to Qt Image
@@ -180,7 +184,7 @@ class QRCodeScannerDialog(QDialog):
         self._decode_frame(frame)
 
     def _decode_frame(self, frame):
-        if not self._requirements_ok():
+        if not self._requirements_ok() or decode is None:
             return
 
         try:
@@ -205,6 +209,10 @@ class QRCodeScannerDialog(QDialog):
 
         fname, _ = QFileDialog.getOpenFileName(self, '이미지 열기', '', "Image files (*.jpg *.png *.jpeg)")
         if fname:
+            if cv2 is None:
+                QMessageBox.warning(self, "오류", "OpenCV를 사용할 수 없습니다.")
+                return
+
             frame = cv2.imread(fname)
             if frame is not None:
                 # Show image
@@ -244,7 +252,7 @@ class QRCodeScannerDialog(QDialog):
             if self.camera_worker and not self.camera_worker.isRunning():
                 self.camera_worker.start()
 
-    def closeEvent(self, event):
+    def closeEvent(self, a0):
         if self.camera_worker:
             self.camera_worker.stop()
-        super().closeEvent(event)
+        super().closeEvent(a0)

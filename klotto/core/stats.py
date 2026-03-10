@@ -35,7 +35,10 @@ class WinningStatsManager:
             if not isinstance(row, dict):
                 continue
             try:
-                draw_no = int(row.get('draw_no'))
+                raw_draw_no = row.get('draw_no')
+                if raw_draw_no is None:
+                    continue
+                draw_no = int(raw_draw_no)
             except (TypeError, ValueError):
                 continue
             self._draw_index[draw_no] = row
@@ -109,7 +112,7 @@ class WinningStatsManager:
             logger.error(f"Failed to load from DB: {e}")
             return False
 
-    def _normalize_draw_input(self, draw_no: int, numbers: List[int], bonus: int) -> Optional[Tuple[int, List[int], int]]:
+    def _normalize_draw_input(self, draw_no: Any, numbers: List[Any], bonus: Any) -> Optional[Tuple[int, List[int], int]]:
         """입력 당첨 데이터 정규화 및 검증"""
         try:
             parsed_draw_no = int(draw_no)

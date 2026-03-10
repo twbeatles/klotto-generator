@@ -1,0 +1,15 @@
+{
+  "typeCheckingMode": "standard",
+  "pythonVersion": "3.10",
+  "include": [
+    "**/*.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".git",
+    ".venv",
+    "venv",
+    "build",
+    "dist"
+  ]
+}
