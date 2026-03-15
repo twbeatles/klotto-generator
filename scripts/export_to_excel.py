@@ -1,10 +1,11 @@
 """
 DB 데이터를 엑셀 파일로 내보내는 스크립트
 """
+from importlib import import_module
 import sqlite3
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 try:
     from scripts.common import resolve_db_path
 except ModuleNotFoundError:
@@ -13,24 +14,54 @@ except ModuleNotFoundError:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from scripts.common import resolve_db_path
 
-try:
-    import openpyxl
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
-except ImportError:
-    print("openpyxl 패키지가 필요합니다. 설치 중...")
-    import subprocess
-    subprocess.check_call(['pip', 'install', 'openpyxl'])
-    import openpyxl
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
+openpyxl: Any | None = None
+Font: Any | None = None
+Alignment: Any | None = None
+PatternFill: Any | None = None
+Border: Any | None = None
+Side: Any | None = None
+get_column_letter: Any | None = None
 
 # Configuration
 DB_PATH = resolve_db_path()
 DATA_DIR = DB_PATH.parent
 
+
+def ensure_openpyxl() -> bool:
+    global openpyxl, Font, Alignment, PatternFill, Border, Side, get_column_letter
+
+    if openpyxl is not None:
+        return True
+
+    try:
+        openpyxl = import_module("openpyxl")
+        styles = import_module("openpyxl.styles")
+        utils = import_module("openpyxl.utils")
+    except ImportError:
+        print("엑셀 내보내기에는 `pip install -r requirements-optional.txt`가 필요합니다.")
+        return False
+
+    Font = styles.Font
+    Alignment = styles.Alignment
+    PatternFill = styles.PatternFill
+    Border = styles.Border
+    Side = styles.Side
+    get_column_letter = utils.get_column_letter
+    return True
+
+
 def export_to_excel(output_path: Optional[Path] = None):
     """Export database to Excel file."""
+    if not ensure_openpyxl():
+        return False
+    assert openpyxl is not None
+    assert Font is not None
+    assert Alignment is not None
+    assert PatternFill is not None
+    assert Border is not None
+    assert Side is not None
+    assert get_column_letter is not None
+
     if not DB_PATH.exists():
         print(f"데이터베이스를 찾을 수 없습니다: {DB_PATH}")
         return False

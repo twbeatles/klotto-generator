@@ -42,13 +42,26 @@
 
 ### 요구 사항
 - Python 3.10 이상
-- 필수 패키지: `PyQt6`, `requests`, `qrcode`, `Pillow`, `numpy`, `opencv-python`, `pyzbar`
-- 선택 패키지: `openpyxl` (엑셀 내보내기 스크립트 사용 시)
+- 기본 패키지: `PyQt6`, `requests`, `qrcode`, `Pillow`
+- QR 스캐너 선택 패키지: `numpy`, `opencv-python`, `pyzbar`
+- 엑셀 내보내기 선택 패키지: `openpyxl`
 
 ### 설치
 ```bash
+python -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
 ```
+
+QR 스캐너와 엑셀 내보내기까지 사용하려면 선택 의존성을 추가로 설치하세요.
+
+```bash
+pip install -r requirements-optional.txt
+```
+
+일부 환경(예: Windows arm64 + Python 3.13)에서는 `opencv-python` 휠이 없어 QR 스캐너 의존성 설치가 실패할 수 있습니다. 이 경우 기본 앱은 그대로 사용할 수 있고, QR 기능은 호환 wheel이 있는 Python/아키텍처에서 추가 설치해 주세요.
+
+VS Code/Pylance는 워크스페이스 기본 인터프리터를 `.venv`로 가정합니다. 처음 설정한 뒤에는 `Python: Select Interpreter`에서 `.venv`를 선택하거나 창을 다시 로드해 주세요.
 
 ### 실행
 ```bash
@@ -62,14 +75,32 @@ pyinstaller klottogenerator.spec
 ```
 빌드된 실행 파일은 `dist/LottoGeneratorPro_v25.exe` (단일 파일)로 생성됩니다.
 
+`klottogenerator.spec`는 빌드 환경에 설치된 선택 의존성을 감지해 QR 스캐너용 `cv2`/`pyzbar` 바이너리를 함께 포함합니다. 선택 의존성이 없는 환경에서도 앱은 빌드되지만 QR 스캐너 기능은 비활성 상태로 배포됩니다.
+
 ## 🔎 개발 품질 체크
 
 ### Pylance/Pyright
 저장소 기본 타입 체크 모드는 `standard`입니다.
 
 ```bash
+.venv\Scripts\activate
 pyright --outputjson
 ```
+
+### UTF-8/인코딩 검증
+한글 문서와 소스가 UTF-8로 유지되는지 아래 스크립트로 빠르게 확인할 수 있습니다.
+
+```bash
+.venv\Scripts\activate
+python scripts/check_utf8.py
+```
+
+### 자동 검증
+GitHub Actions의 `Repo Health` 워크플로가 push / pull request마다 다음 항목을 검사합니다.
+
+- UTF-8 인코딩 검증
+- `pyright --outputjson`
+- `python -m compileall ...`
 
 ### 컴파일 검증
 ```bash
@@ -101,6 +132,7 @@ klotto-generator/
 │   └── lotto_history.db    # SQLite DB (1회~현재)
 ├── scripts/                 # 유틸리티 스크립트
 │   ├── common.py                 # 스크립트 공통 경로/DB resolver
+│   ├── check_utf8.py             # UTF-8/대체 문자 검증
 │   ├── test_stats.py             # 통계 로드 점검
 │   ├── verify_db.py              # DB 상태 점검
 │   ├── scrape_lotto_history.py   # DB 스크래핑
@@ -108,9 +140,13 @@ klotto-generator/
 ├── run_klotto.py            # 실행 진입점
 ├── klottogenerator.py       # 레거시 단일 파일 버전 (호환 유지)
 ├── klottogenerator.spec     # PyInstaller 설정
+├── requirements.txt         # 기본 실행 의존성
+├── requirements-optional.txt # QR/엑셀 선택 의존성
 ├── pyrightconfig.json       # Pylance/Pyright 설정
 ├── .editorconfig            # UTF-8/에디터 규칙
+├── .gitattributes           # Git 줄바꿈 정책
 ├── .vscode/settings.json    # 워크스페이스 분석/인코딩 설정
+├── .github/workflows/repo-health.yml # CI 저장소 헬스 체크
 ├── .gitignore               # 빌드/캐시/로컬 산출물 제외
 └── README.md
 ```
@@ -148,6 +184,12 @@ klotto-generator/
 - macOS/Linux: `~/.lotto_generator/`
 
 ## 📝 변경 이력
+
+### v2.5 유지보수 (2026-03-15)
+- ✅ 선택적 네이티브 의존성(`cv2`, `pyzbar`) import를 Pylance 친화적으로 정리
+- 🧪 `.venv` 기반 워크스페이스/Pyright 설정 정합성 강화
+- 🔤 UTF-8 검증 스크립트(`scripts/check_utf8.py`) 및 GitHub Actions 리포지토리 헬스 체크 추가
+- 📦 `requirements.txt` / `requirements-optional.txt` 분리 및 PyInstaller spec 선택 의존성 번들링 정리
 
 ### v2.5 유지보수 (2026-03-10)
 - ✅ Pylance/Pyright 전수 정리 완료 (`errorCount: 0`)

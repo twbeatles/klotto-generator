@@ -6,7 +6,9 @@ Lotto Generator Pro v2.5 - PyInstaller Spec File (Onefile Mode)
 """
 
 import sys
+from importlib.util import find_spec
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_dynamic_libs
 
 # 프로젝트 경로
 project_path = Path(SPECPATH)
@@ -60,23 +62,39 @@ hidden_imports = [
     'PyQt6.QtWidgets',
     'qrcode',
     'PIL.ImageQt',
-    # QR 스캐너 의존성 (지연 import 사용 시 번들 누락 방지)
-    'cv2',
-    'numpy',
-    'pyzbar.pyzbar',
     'email',
     'PyQt6.QtNetwork',
 ]
 
+
+def has_module(name):
+    return find_spec(name) is not None
+
+
+optional_hidden_imports = []
+optional_binaries = []
+
+# QR 스캐너 기능은 선택 의존성이 설치된 빌드 환경에서만 함께 번들링한다.
+if has_module('numpy'):
+    optional_hidden_imports.append('numpy')
+
+if has_module('cv2'):
+    optional_hidden_imports.append('cv2')
+    optional_binaries.extend(collect_dynamic_libs('cv2'))
+
+if has_module('pyzbar'):
+    optional_hidden_imports.append('pyzbar.pyzbar')
+    optional_binaries.extend(collect_dynamic_libs('pyzbar'))
+
 a = Analysis(
     [entry_script],
     pathex=[str(project_path)],
-    binaries=[],
+    binaries=optional_binaries,
     # 로또 히스토리 DB 포함 (파일이 존재할 때만 번들에 추가)
     datas=[
         (str(project_path / 'data' / 'lotto_history.db'), 'data'),
     ] if (project_path / 'data' / 'lotto_history.db').exists() else [],
-    hiddenimports=hidden_imports,
+    hiddenimports=hidden_imports + optional_hidden_imports,
 
     hookspath=[],
     hooksconfig={},
@@ -170,6 +188,10 @@ exe = EXE(
 # 1. 필수 설치
 #    pip install pyinstaller
 #    pip install pyinstaller-hooks-contrib  # 추가 hooks
+#    pip install -r requirements.txt
+#
+# 1-1. (선택) QR 스캐너/엑셀 기능까지 번들하려면
+#    pip install -r requirements-optional.txt
 #
 # 2. (선택) UPX 설치 - 추가 압축
 #    https://github.com/upx/upx/releases 에서 다운로드

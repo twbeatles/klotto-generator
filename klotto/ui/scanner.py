@@ -1,7 +1,10 @@
+from importlib import import_module
 from typing import Any, Callable, Optional
 
+# Optional native extensions are loaded dynamically so editor analysis
+# stays clean even when scanner-specific packages are not installed.
 try:
-    import cv2
+    cv2 = import_module("cv2")
     HAS_CV2 = True
 except Exception as e:
     cv2 = None
@@ -20,7 +23,7 @@ from klotto.qr_utils import parse_lotto_qr_url
 # Try importing pyzbar
 decode: Optional[Callable[[Any], Any]] = None
 try:
-    from pyzbar.pyzbar import decode
+    decode = import_module("pyzbar.pyzbar").decode
     HAS_PYZBAR = True
 except ImportError:
     HAS_PYZBAR = False
@@ -78,7 +81,7 @@ class QRCodeScannerDialog(QDialog):
                 self,
                 "의존성 누락",
                 "QR 스캔 기능에 필요한 라이브러리가 없습니다.\n"
-                "pip install opencv-python pyzbar numpy"
+                "pip install -r requirements-optional.txt"
             )
     
     def _setup_ui(self):
