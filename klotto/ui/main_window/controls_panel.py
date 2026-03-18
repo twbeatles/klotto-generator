@@ -2,7 +2,11 @@ from PyQt6.QtWidgets import QCheckBox, QGridLayout, QGroupBox, QHBoxLayout, QLab
 
 from klotto.config import APP_CONFIG
 from klotto.core.generation_service import GenerationRequest
-from klotto.core.lotto_rules import parse_number_expression, validate_generation_constraints
+from klotto.core.lotto_rules import (
+    parse_number_expression,
+    validate_balance_constraints,
+    validate_generation_constraints,
+)
 
 
 class GenerationControlsPanel(QGroupBox):
@@ -91,6 +95,11 @@ class GenerationControlsPanel(QGroupBox):
         )
         if validation_error:
             raise ValueError(validation_error)
+
+        if self.smart_mode_chk.isChecked() and self.balance_chk.isChecked():
+            balance_error = validate_balance_constraints(fixed_nums, exclude_nums)
+            if balance_error:
+                raise ValueError(balance_error)
 
         return GenerationRequest(
             count=self.count_spin.value(),

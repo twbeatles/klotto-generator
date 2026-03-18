@@ -45,6 +45,7 @@ class WinningCheckDialog(QDialog):
         self.qr_payload = qr_payload
         self._pending_qr_payload: Optional[Dict[str, Any]] = None
         self._qr_network_manager: Optional[LottoNetworkManager] = None
+        self._source_items: List[Dict[str, Any]] = []
 
         self.setWindowTitle("🎯 당첨 확인")
         self.setMinimumSize(650, 500)
@@ -110,6 +111,7 @@ class WinningCheckDialog(QDialog):
 
     def _update_number_list(self):
         self.number_list.clear()
+        self._source_items = []
 
         if self.source_combo.currentIndex() == 0:
             for fav in self.favorites_manager.get_all():
@@ -119,10 +121,12 @@ class WinningCheckDialog(QDialog):
                 if memo:
                     text += f" ({memo})"
                 self.number_list.addItem(text)
+                self._source_items.append({"numbers": nums, "source": "favorites"})
         else:
-            for hist in self.history_manager.get_recent(50):
+            for hist in self.history_manager.get_all():
                 nums = hist.get("numbers", [])
                 self.number_list.addItem(f"{', '.join(map(str, nums))}")
+                self._source_items.append({"numbers": nums, "source": "history"})
 
     def _clear_results(self):
         while self.result_inner_layout.count():
@@ -220,11 +224,10 @@ class WinningCheckDialog(QDialog):
             QMessageBox.warning(self, "선택 필요", "확인할 번호를 선택하세요.")
             return
 
-        data = self.favorites_manager.get_all() if self.source_combo.currentIndex() == 0 else self.history_manager.get_recent(50)
-        if row >= len(data):
+        if row >= len(self._source_items):
             return
 
-        normalized = normalize_numbers(data[row].get("numbers", []))
+        normalized = normalize_numbers(self._source_items[row].get("numbers", []))
         if not normalized:
             self._add_info_result("선택한 번호 데이터 형식이 올바르지 않습니다.", ThemeManager.get_theme()["danger"])
             return
@@ -323,12 +326,18 @@ class WinningCheckDialog(QDialog):
             self._on_qr_draw_error("요청한 회차와 다른 응답이 수신되었습니다.")
             return
 
-        self.stats_manager.add_winning_data(
+        status = self.stats_manager.upsert_winning_data(
             normalized_draw["draw_no"],
             normalized_draw["numbers"],
             normalized_draw["bonus"],
             draw_date=normalized_draw["date"] or None,
+            first_prize=normalized_draw.get("first_prize"),
+            first_winners=normalized_draw.get("first_winners"),
+            total_sales=normalized_draw.get("total_sales"),
         )
+        if status == "invalid":
+            self._on_qr_draw_error("QR 회차 데이터를 저장하지 못했습니다.")
+            return
         draw_data = self.stats_manager.get_draw_data(expected_draw)
         if not draw_data:
             self._on_qr_draw_error("QR 회차 데이터를 저장했지만 조회에 실패했습니다.")

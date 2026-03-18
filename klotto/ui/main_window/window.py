@@ -40,6 +40,13 @@ from klotto.ui.widgets import WinningInfoWidget
 
 class LottoApp(QWidget):
     MAX_GENERATE_RETRIES = 100
+    FAILURE_REASON_LABELS = {
+        "balance_constraints": "홀짝 균형 조건 불가",
+        "consecutive_limit": "연속 번호 제한",
+        "duplicate_history": "기존 히스토리 중복",
+        "duplicate_batch": "이번 배치 중복",
+        "candidate_exhausted": "조건 만족 후보 소진",
+    }
 
     def __init__(self):
         super().__init__()
@@ -86,7 +93,7 @@ class LottoApp(QWidget):
         header_layout.addWidget(self.theme_btn)
         main_layout.addLayout(header_layout)
 
-        self.winning_info_widget = WinningInfoWidget()
+        self.winning_info_widget = WinningInfoWidget(self.stats_manager)
         main_layout.addWidget(self.winning_info_widget)
 
         self.controls_panel = GenerationControlsPanel()
@@ -210,10 +217,14 @@ class LottoApp(QWidget):
             request = self.controls_panel.build_request(max_generate_retries=self.MAX_GENERATE_RETRIES)
             result = self.generation_service.generate_batch(request)
             if not result.generated_sets:
+                reason_summary = self._format_failure_reasons(result.failure_reasons)
+                message = f"요청 {result.requested_count}개 중 생성된 조합이 없습니다.\n실패: {result.failed_count}개"
+                if reason_summary:
+                    message += f"\n{reason_summary}"
                 QMessageBox.warning(
                     self,
                     "생성 실패",
-                    f"요청 {result.requested_count}개 중 생성된 조합이 없습니다.\n실패: {result.failed_count}개",
+                    message,
                 )
                 return
 
@@ -232,10 +243,16 @@ class LottoApp(QWidget):
             self.last_generated_time = datetime.datetime.now()
 
             if result.failed_count > 0:
+                reason_summary = self._format_failure_reasons(result.failure_reasons)
+                message = (
+                    f"요청 {result.requested_count}개 / 생성 {len(result.generated_sets)}개 / 실패 {result.failed_count}개"
+                )
+                if reason_summary:
+                    message += f"\n{reason_summary}"
                 QMessageBox.warning(
                     self,
                     "부분 생성 완료",
-                    f"요청 {result.requested_count}개 / 생성 {len(result.generated_sets)}개 / 실패 {result.failed_count}개",
+                    message,
                 )
         except ValueError as exc:
             QMessageBox.warning(self, "입력 오류", str(exc))
@@ -249,6 +266,19 @@ class LottoApp(QWidget):
 
     def _on_results_cleared(self):
         self.total_generated = 0
+
+    def _format_failure_reasons(self, reasons: dict[str, int]) -> str:
+        filtered = [
+            (self.FAILURE_REASON_LABELS.get(reason, reason), count)
+            for reason, count in reasons.items()
+            if count > 0
+        ]
+        if not filtered:
+            return ""
+
+        filtered.sort(key=lambda item: item[1], reverse=True)
+        summary = ", ".join(f"{label} {count}회" for label, count in filtered[:3])
+        return f"주요 차단 원인: {summary}"
 
     def _add_to_favorites(self, numbers: List[int]):
         if not self.favorites_manager.add(numbers):

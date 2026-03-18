@@ -3,22 +3,27 @@ import datetime
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, List, Dict, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Sequence, cast
+
 from klotto.config import APP_CONFIG
-from klotto.core.lotto_rules import normalize_bonus, normalize_numbers, normalize_positive_int
+from klotto.core.lotto_rules import normalize_bonus, normalize_numbers, normalize_positive_int, safe_int
 from klotto.logging import logger
+
+WinningRecord = Dict[str, Any]
+UpsertStatus = str
+
 
 # ============================================================
 # 역대 당첨 번호 통계 관리
 # ============================================================
 class WinningStatsManager:
     """역대 당첨 번호 통계 관리 (SQLite DB 우선, JSON 폴백)"""
-    
+
     def __init__(self):
-        self.stats_file: Path = cast(Path, APP_CONFIG['WINNING_STATS_FILE'])
-        self.db_path: Path = cast(Path, APP_CONFIG['LOTTO_HISTORY_DB'])
-        self.winning_data: List[Dict[str, Any]] = []
-        self._draw_index: Dict[int, Dict[str, Any]] = {}
+        self.stats_file: Path = cast(Path, APP_CONFIG["WINNING_STATS_FILE"])
+        self.db_path: Path = cast(Path, APP_CONFIG["LOTTO_HISTORY_DB"])
+        self.winning_data: List[WinningRecord] = []
+        self._draw_index: Dict[int, WinningRecord] = {}
         self._frequency_cache: Optional[Dict[str, Any]] = None
         self._range_cache: Optional[Dict[str, int]] = None
         self._pair_cache: Optional[Dict[str, Any]] = None
@@ -29,91 +34,43 @@ class WinningStatsManager:
         self._range_cache = None
         self._pair_cache = None
 
-    def _set_winning_data(self, data: List[Dict[str, Any]]):
-        self.winning_data = data
-        self._draw_index = {}
-        for row in data:
-            if not isinstance(row, dict):
-                continue
-            try:
-                raw_draw_no = row.get('draw_no')
-                if raw_draw_no is None:
-                    continue
-                draw_no = int(raw_draw_no)
-            except (TypeError, ValueError):
-                continue
-            self._draw_index[draw_no] = row
-        self._invalidate_analysis_cache()
+    @staticmethod
+    def _normalize_metadata_value(value: Any) -> int:
+        parsed = safe_int(value, default=0)
+        return parsed if parsed > 0 else 0
 
-    def _append_draw_data(self, draw_no: int, numbers: List[int], bonus: int, draw_date: Optional[str] = None):
-        row = {
-            'draw_no': draw_no,
-            'numbers': numbers,
-            'bonus': bonus,
-            'date': draw_date or datetime.datetime.now().isoformat()
+    def _build_record(
+        self,
+        draw_no: int,
+        numbers: Sequence[int],
+        bonus: int,
+        *,
+        draw_date: str = "",
+        first_prize: int = 0,
+        first_winners: int = 0,
+        total_sales: int = 0,
+    ) -> WinningRecord:
+        return {
+            "draw_no": int(draw_no),
+            "date": draw_date,
+            "numbers": list(numbers),
+            "bonus": int(bonus),
+            "first_prize": self._normalize_metadata_value(first_prize),
+            "first_winners": self._normalize_metadata_value(first_winners),
+            "total_sales": self._normalize_metadata_value(total_sales),
         }
-        self.winning_data.append(row)
-        self.winning_data.sort(key=lambda x: x['draw_no'], reverse=True)
-        self._draw_index[draw_no] = row
-        self._invalidate_analysis_cache()
-    
-    def _load(self):
-        """데이터 로드 - DB 우선, JSON 폴백"""
-        # 먼저 SQLite DB에서 로드 시도
-        if self.db_path and self.db_path.exists():
-            if self._load_from_db():
-                return
-        
-        # DB가 없으면 JSON 파일에서 로드
-        self._load_from_json()
-    
-    def _load_from_db(self) -> bool:
-        """SQLite DB에서 데이터 로드"""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    SELECT draw_no, date, num1, num2, num3, num4, num5, num6, bonus 
-                    FROM draws 
-                    ORDER BY draw_no DESC
-                ''')
-                rows = cursor.fetchall()
-            
-            if not rows:
-                return False
-            
-            parsed_data: List[Dict[str, Any]] = []
-            invalid_count = 0
-            for row in rows:
-                normalized = self._normalize_draw_input(row[0], [row[2], row[3], row[4], row[5], row[6], row[7]], row[8])
-                if not normalized:
-                    invalid_count += 1
-                    continue
 
-                draw_no, numbers, bonus = normalized
-                parsed_data.append({
-                    'draw_no': draw_no,
-                    'date': row[1] or '',
-                    'numbers': numbers,
-                    'bonus': bonus
-                })
-
-            if invalid_count:
-                logger.warning(f"Skipped {invalid_count} invalid winning records from DB")
-
-            if not parsed_data:
-                return False
-
-            self._set_winning_data(parsed_data)
-            
-            logger.info(f"Loaded {len(self.winning_data)} winning records from DB")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to load from DB: {e}")
-            return False
-
-    def _normalize_draw_input(self, draw_no: Any, numbers: List[Any], bonus: Any) -> Optional[Tuple[int, List[int], int]]:
+    def _normalize_draw_input(
+        self,
+        draw_no: Any,
+        numbers: Sequence[Any],
+        bonus: Any,
+        *,
+        draw_date: Optional[str] = None,
+        first_prize: Any = None,
+        first_winners: Any = None,
+        total_sales: Any = None,
+    ) -> Optional[WinningRecord]:
         """입력 당첨 데이터 정규화 및 검증"""
         parsed_draw_no = normalize_positive_int(draw_no)
         parsed_numbers = normalize_numbers(numbers)
@@ -123,93 +80,312 @@ class WinningStatsManager:
         if parsed_bonus is None:
             return None
 
-        return parsed_draw_no, parsed_numbers, parsed_bonus
+        normalized_date = draw_date if isinstance(draw_date, str) else ""
+        return self._build_record(
+            parsed_draw_no,
+            parsed_numbers,
+            parsed_bonus,
+            draw_date=normalized_date,
+            first_prize=self._normalize_metadata_value(first_prize),
+            first_winners=self._normalize_metadata_value(first_winners),
+            total_sales=self._normalize_metadata_value(total_sales),
+        )
 
-    def _save_to_db(self, draw_no: int, numbers: List[int], bonus: int, draw_date: Optional[str] = None) -> bool:
-        """DB에 당첨 데이터 저장 (신규 삽입 시 True)"""
+    def _merge_records(self, existing: Optional[WinningRecord], incoming: WinningRecord) -> WinningRecord:
+        if existing is None:
+            return self._build_record(
+                incoming["draw_no"],
+                incoming["numbers"],
+                incoming["bonus"],
+                draw_date=incoming.get("date", ""),
+                first_prize=incoming.get("first_prize", 0),
+                first_winners=incoming.get("first_winners", 0),
+                total_sales=incoming.get("total_sales", 0),
+            )
+
+        return self._build_record(
+            incoming["draw_no"],
+            incoming["numbers"],
+            incoming["bonus"],
+            draw_date=incoming.get("date") or existing.get("date", ""),
+            first_prize=incoming.get("first_prize", 0) or existing.get("first_prize", 0),
+            first_winners=incoming.get("first_winners", 0) or existing.get("first_winners", 0),
+            total_sales=incoming.get("total_sales", 0) or existing.get("total_sales", 0),
+        )
+
+    @staticmethod
+    def _records_equal(left: WinningRecord, right: WinningRecord) -> bool:
+        return (
+            int(left.get("draw_no", 0)) == int(right.get("draw_no", 0))
+            and list(left.get("numbers", [])) == list(right.get("numbers", []))
+            and int(left.get("bonus", 0)) == int(right.get("bonus", 0))
+            and str(left.get("date", "")) == str(right.get("date", ""))
+            and int(left.get("first_prize", 0)) == int(right.get("first_prize", 0))
+            and int(left.get("first_winners", 0)) == int(right.get("first_winners", 0))
+            and int(left.get("total_sales", 0)) == int(right.get("total_sales", 0))
+        )
+
+    def _record_from_row(self, row: Sequence[Any]) -> Optional[WinningRecord]:
+        if len(row) < 12:
+            return None
+        return self._normalize_draw_input(
+            row[0],
+            [row[2], row[3], row[4], row[5], row[6], row[7]],
+            row[8],
+            draw_date=row[1],
+            first_prize=row[9],
+            first_winners=row[10],
+            total_sales=row[11],
+        )
+
+    def _set_winning_data(self, data: List[WinningRecord]):
+        self.winning_data = sorted(
+            [dict(record) for record in data if isinstance(record, dict)],
+            key=lambda record: int(record.get("draw_no", 0)),
+            reverse=True,
+        )
+        self._draw_index = {}
+        for row in self.winning_data:
+            try:
+                draw_no = int(row.get("draw_no", 0))
+            except (TypeError, ValueError):
+                continue
+            if draw_no > 0:
+                self._draw_index[draw_no] = row
+        self._invalidate_analysis_cache()
+
+    def _store_cached_record(self, record: WinningRecord):
+        draw_no = int(record["draw_no"])
+        stored = dict(record)
+        for index, existing in enumerate(self.winning_data):
+            if int(existing.get("draw_no", 0)) == draw_no:
+                self.winning_data[index] = stored
+                break
+        else:
+            self.winning_data.append(stored)
+
+        self.winning_data.sort(key=lambda item: int(item.get("draw_no", 0)), reverse=True)
+        self._draw_index[draw_no] = stored
+        self._invalidate_analysis_cache()
+
+    def _trim_json_cache(self):
+        if self.db_path and self.db_path.exists():
+            return
+
+        cache_size = cast(int, APP_CONFIG["WINNING_STATS_CACHE_SIZE"])
+        if len(self.winning_data) > cache_size:
+            self._set_winning_data(self.winning_data[:cache_size])
+
+    def _ensure_db_schema(self, conn: sqlite3.Connection):
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS draws (
+                draw_no INTEGER PRIMARY KEY,
+                date TEXT,
+                num1 INTEGER, num2 INTEGER, num3 INTEGER,
+                num4 INTEGER, num5 INTEGER, num6 INTEGER,
+                bonus INTEGER,
+                prize_amount INTEGER,
+                winners_count INTEGER,
+                total_sales INTEGER
+            )
+            """
+        )
+
+    def _load(self):
+        """데이터 로드 - DB 우선, JSON 폴백"""
+        if self.db_path and self.db_path.exists() and self._load_from_db():
+            return
+        self._load_from_json()
+
+    def _load_from_db(self) -> bool:
+        """SQLite DB에서 데이터 로드"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT draw_no, date, num1, num2, num3, num4, num5, num6, bonus,
+                           prize_amount, winners_count, total_sales
+                    FROM draws
+                    ORDER BY draw_no DESC
+                    """
+                )
+                rows = cursor.fetchall()
+
+            if not rows:
+                return False
+
+            parsed_data: List[WinningRecord] = []
+            invalid_count = 0
+            for row in rows:
+                record = self._record_from_row(row)
+                if record is None:
+                    invalid_count += 1
+                    continue
+                parsed_data.append(record)
+
+            if invalid_count:
+                logger.warning("Skipped %s invalid winning records from DB", invalid_count)
+
+            if not parsed_data:
+                return False
+
+            self._set_winning_data(parsed_data)
+            logger.info("Loaded %s winning records from DB", len(self.winning_data))
+            return True
+        except Exception as exc:
+            logger.error("Failed to load from DB: %s", exc)
+            return False
+
+    def _load_record_from_db(self, draw_no: int) -> Optional[WinningRecord]:
+        if not self.db_path or not self.db_path.exists():
+            return None
+
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT draw_no, date, num1, num2, num3, num4, num5, num6, bonus,
+                           prize_amount, winners_count, total_sales
+                    FROM draws
+                    WHERE draw_no = ?
+                    LIMIT 1
+                    """,
+                    (draw_no,),
+                )
+                row = cursor.fetchone()
+        except Exception as exc:
+            logger.error("Failed to query draw #%s from DB: %s", draw_no, exc)
+            return None
+
+        if not row:
+            return None
+        return self._record_from_row(row)
+
+    def _get_existing_record(self, draw_no: int) -> Optional[WinningRecord]:
+        db_record = self._load_record_from_db(draw_no)
+        if db_record:
+            return db_record
+
+        cached = self._draw_index.get(draw_no)
+        if not cached:
+            return None
+
+        return self._build_record(
+            cached["draw_no"],
+            cached["numbers"],
+            cached["bonus"],
+            draw_date=str(cached.get("date", "")),
+            first_prize=int(cached.get("first_prize", 0)),
+            first_winners=int(cached.get("first_winners", 0)),
+            total_sales=int(cached.get("total_sales", 0)),
+        )
+
+    def _save_record_to_db(self, record: WinningRecord) -> bool:
         if not self.db_path:
             return False
 
         try:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             with sqlite3.connect(self.db_path) as conn:
+                self._ensure_db_schema(conn)
                 cursor = conn.cursor()
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS draws (
-                        draw_no INTEGER PRIMARY KEY,
-                        date TEXT,
-                        num1 INTEGER, num2 INTEGER, num3 INTEGER,
-                        num4 INTEGER, num5 INTEGER, num6 INTEGER,
-                        bonus INTEGER,
-                        prize_amount INTEGER,
-                        winners_count INTEGER,
-                        total_sales INTEGER
+                cursor.execute(
+                    """
+                    INSERT INTO draws (
+                        draw_no, date, num1, num2, num3, num4, num5, num6, bonus,
+                        prize_amount, winners_count, total_sales
                     )
-                ''')
-
-                cursor.execute('''
-                    INSERT OR IGNORE INTO draws 
-                    (draw_no, date, num1, num2, num3, num4, num5, num6, bonus, prize_amount, winners_count, total_sales)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    draw_no,
-                    draw_date or datetime.date.today().isoformat(),
-                    numbers[0], numbers[1], numbers[2],
-                    numbers[3], numbers[4], numbers[5],
-                    bonus,
-                    0,
-                    0,
-                    0,
-                ))
-
-                return cursor.rowcount > 0
-        except Exception as e:
-            logger.error(f"Failed to save winning stats to DB: {e}")
+                    ON CONFLICT(draw_no) DO UPDATE SET
+                        date = CASE
+                            WHEN excluded.date <> '' THEN excluded.date
+                            ELSE draws.date
+                        END,
+                        num1 = excluded.num1,
+                        num2 = excluded.num2,
+                        num3 = excluded.num3,
+                        num4 = excluded.num4,
+                        num5 = excluded.num5,
+                        num6 = excluded.num6,
+                        bonus = excluded.bonus,
+                        prize_amount = CASE
+                            WHEN excluded.prize_amount > 0 THEN excluded.prize_amount
+                            ELSE draws.prize_amount
+                        END,
+                        winners_count = CASE
+                            WHEN excluded.winners_count > 0 THEN excluded.winners_count
+                            ELSE draws.winners_count
+                        END,
+                        total_sales = CASE
+                            WHEN excluded.total_sales > 0 THEN excluded.total_sales
+                            ELSE draws.total_sales
+                        END
+                    """,
+                    (
+                        record["draw_no"],
+                        record.get("date", ""),
+                        record["numbers"][0],
+                        record["numbers"][1],
+                        record["numbers"][2],
+                        record["numbers"][3],
+                        record["numbers"][4],
+                        record["numbers"][5],
+                        record["bonus"],
+                        record.get("first_prize", 0),
+                        record.get("first_winners", 0),
+                        record.get("total_sales", 0),
+                    ),
+                )
+                conn.commit()
+            return True
+        except Exception as exc:
+            logger.error("Failed to save winning stats to DB: %s", exc)
             return False
-    
+
     def _load_from_json(self):
         """JSON 파일에서 통계 데이터 로드 (폴백)"""
         try:
             if self.stats_file and self.stats_file.exists():
-                with open(self.stats_file, 'r', encoding='utf-8') as f:
-                    loaded = json.load(f)
+                with open(self.stats_file, "r", encoding="utf-8") as file:
+                    loaded = json.load(file)
 
-                parsed_data: List[Dict[str, Any]] = []
+                parsed_data: List[WinningRecord] = []
                 seen_draws = set()
                 for item in loaded if isinstance(loaded, list) else []:
                     if not isinstance(item, dict):
                         continue
 
-                    normalized = self._normalize_draw_input(
-                        item.get('draw_no'),
-                        item.get('numbers', []),
-                        item.get('bonus'),
+                    record = self._normalize_draw_input(
+                        item.get("draw_no"),
+                        item.get("numbers", []),
+                        item.get("bonus"),
+                        draw_date=item.get("date"),
+                        first_prize=item.get("first_prize"),
+                        first_winners=item.get("first_winners"),
+                        total_sales=item.get("total_sales"),
                     )
-                    if not normalized:
+                    if not record:
                         continue
 
-                    draw_no, numbers, bonus = normalized
+                    draw_no = int(record["draw_no"])
                     if draw_no in seen_draws:
                         continue
 
-                    date_value = item.get('date')
-                    parsed_data.append({
-                        'draw_no': draw_no,
-                        'numbers': numbers,
-                        'bonus': bonus,
-                        'date': date_value if isinstance(date_value, str) else ''
-                    })
+                    parsed_data.append(record)
                     seen_draws.add(draw_no)
 
-                parsed_data.sort(key=lambda x: x['draw_no'], reverse=True)
                 self._set_winning_data(parsed_data)
-                logger.info(f"Loaded {len(self.winning_data)} winning records from JSON")
+                logger.info("Loaded %s winning records from JSON", len(self.winning_data))
             else:
                 self._set_winning_data([])
-        except Exception as e:
-            logger.error(f"Failed to load winning stats: {e}")
+        except Exception as exc:
+            logger.error("Failed to load winning stats: %s", exc)
             self._set_winning_data([])
-    
+
     def _save(self):
         """통계 데이터 저장 (JSON - 캐시용)"""
         if not self.stats_file:
@@ -218,60 +394,93 @@ class WinningStatsManager:
         temp_file: Optional[Path] = None
         try:
             self.stats_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.stats_file.with_suffix('.tmp')
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(self.winning_data, f, ensure_ascii=False, indent=2)
-            # Atomic replacement
+            temp_file = self.stats_file.with_suffix(".tmp")
+            with open(temp_file, "w", encoding="utf-8") as file:
+                json.dump(self.winning_data, file, ensure_ascii=False, indent=2)
             if self.stats_file.exists():
                 os.replace(temp_file, self.stats_file)
             else:
                 os.rename(temp_file, self.stats_file)
-        except Exception as e:
-            logger.error(f"Failed to save winning stats: {e}")
-            # Clean up temp file if exists
+        except Exception as exc:
+            logger.error("Failed to save winning stats: %s", exc)
             try:
                 if temp_file and temp_file.exists():
                     temp_file.unlink()
-            except: pass
-    
-    def add_winning_data(self, draw_no: int, numbers: List[int], bonus: int, draw_date: Optional[str] = None) -> bool:
-        """당첨 데이터 추가 (신규 저장 시 True, 중복/실패 시 False)"""
-        normalized = self._normalize_draw_input(draw_no, numbers, bonus)
-        if not normalized:
-            logger.warning(f"Invalid winning data ignored: draw_no={draw_no}")
-            return False
+            except Exception:
+                pass
 
-        parsed_draw_no, parsed_numbers, parsed_bonus = normalized
+    def upsert_winning_data(
+        self,
+        draw_no: int,
+        numbers: List[int],
+        bonus: int,
+        *,
+        draw_date: Optional[str] = None,
+        first_prize: Any = None,
+        first_winners: Any = None,
+        total_sales: Any = None,
+    ) -> UpsertStatus:
+        """당첨 데이터를 저장하거나 갱신한다."""
+        incoming = self._normalize_draw_input(
+            draw_no,
+            numbers,
+            bonus,
+            draw_date=draw_date,
+            first_prize=first_prize,
+            first_winners=first_winners,
+            total_sales=total_sales,
+        )
+        if not incoming:
+            logger.warning("Invalid winning data ignored: draw_no=%s", draw_no)
+            return "invalid"
 
-        # 메모리 캐시 중복 체크 (O(1))
-        if parsed_draw_no in self._draw_index:
-            return False
+        existing = self._get_existing_record(int(incoming["draw_no"]))
+        merged = self._merge_records(existing, incoming)
 
-        if self.db_path:
-            if self._save_to_db(parsed_draw_no, parsed_numbers, parsed_bonus, draw_date=draw_date):
-                self._append_draw_data(parsed_draw_no, parsed_numbers, parsed_bonus, draw_date=draw_date)
-                self._save()
-                return True
+        if existing is None:
+            status: UpsertStatus = "inserted"
+        elif self._records_equal(existing, merged):
+            status = "unchanged"
+        else:
+            status = "updated"
 
-            # DB 삽입 실패 시 최신 상태 다시 로드 (중복 여부 동기화)
-            if self._load_from_db():
-                return False
+        if status != "unchanged" and self.db_path:
+            if not self._save_record_to_db(merged):
+                if self.db_path.exists():
+                    self._load_from_db()
+                return "invalid"
 
-        if parsed_draw_no in self._draw_index:
-            return False
-        
-        self._append_draw_data(parsed_draw_no, parsed_numbers, parsed_bonus, draw_date=draw_date)
-        
-        # JSON 캐시 크기 제한 (DB가 없을 때만 적용)
-        if not (self.db_path and self.db_path.exists()):
-            cache_size = cast(int, APP_CONFIG['WINNING_STATS_CACHE_SIZE'])
-            if len(self.winning_data) > cache_size:
-                self._set_winning_data(self.winning_data[:cache_size])
-        
-        self._save()
-        return True
+        cached = self._draw_index.get(int(merged["draw_no"]))
+        if status != "unchanged" or cached is None or not self._records_equal(cached, merged):
+            self._store_cached_record(merged)
+            self._trim_json_cache()
+            self._save()
 
-    def get_draw_data(self, draw_no: int) -> Optional[Dict[str, Any]]:
+        return status
+
+    def add_winning_data(
+        self,
+        draw_no: int,
+        numbers: List[int],
+        bonus: int,
+        draw_date: Optional[str] = None,
+        *,
+        first_prize: Any = None,
+        first_winners: Any = None,
+        total_sales: Any = None,
+    ) -> UpsertStatus:
+        """호환용 별칭: 내부 구현은 upsert_winning_data로 통일한다."""
+        return self.upsert_winning_data(
+            draw_no,
+            numbers,
+            bonus,
+            draw_date=draw_date,
+            first_prize=first_prize,
+            first_winners=first_winners,
+            total_sales=total_sales,
+        )
+
+    def get_draw_data(self, draw_no: int) -> Optional[WinningRecord]:
         """특정 회차 데이터 반환"""
         try:
             target = int(draw_no)
@@ -283,39 +492,20 @@ class WinningStatsManager:
 
         cached = self._draw_index.get(target)
         if cached:
-            return cached
+            return dict(cached)
 
-        # 캐시가 오래됐을 수 있으므로 DB 재로드 후 한 번 더 조회
-        if self.db_path and self.db_path.exists():
-            try:
-                with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        '''
-                        SELECT draw_no, date, num1, num2, num3, num4, num5, num6, bonus
-                        FROM draws
-                        WHERE draw_no = ?
-                        LIMIT 1
-                        ''',
-                        (target,),
-                    )
-                    row = cursor.fetchone()
-                if row:
-                    normalized = self._normalize_draw_input(row[0], [row[2], row[3], row[4], row[5], row[6], row[7]], row[8])
-                    if normalized:
-                        parsed_draw_no, numbers, bonus = normalized
-                        self._append_draw_data(parsed_draw_no, numbers, bonus, draw_date=row[1] or '')
-                        return self._draw_index.get(parsed_draw_no)
-            except Exception as e:
-                logger.error(f"Failed to query draw #{target} from DB: {e}")
+        record = self._load_record_from_db(target)
+        if record:
+            self._store_cached_record(record)
+            return dict(record)
 
         return None
-    
+
     def reload_from_db(self):
         """DB에서 데이터 다시 로드 (수동 새로고침용)"""
         if self.db_path and self.db_path.exists():
             self._load_from_db()
-    
+
     def get_frequency_analysis(self) -> Dict[str, Any]:
         """번호별 출현 빈도 분석"""
         if self._frequency_cache is not None:
@@ -323,31 +513,29 @@ class WinningStatsManager:
 
         if not self.winning_data:
             return {}
-        
-        # 번호별 출현 횟수
+
         number_counts = {i: 0 for i in range(1, 46)}
         bonus_counts = {i: 0 for i in range(1, 46)}
-        
+
         for data in self.winning_data:
-            for num in data['numbers']:
+            for num in data["numbers"]:
                 if num in number_counts:
                     number_counts[num] += 1
-            bonus = data.get('bonus')
+            bonus = data.get("bonus")
             if bonus in bonus_counts:
                 bonus_counts[bonus] += 1
-        
-        # 정렬
-        sorted_by_count = sorted(number_counts.items(), key=lambda x: x[1], reverse=True)
-        
+
+        sorted_by_count = sorted(number_counts.items(), key=lambda item: item[1], reverse=True)
+
         self._frequency_cache = {
-            'total_draws': len(self.winning_data),
-            'number_counts': number_counts,
-            'bonus_counts': bonus_counts,
-            'hot_numbers': sorted_by_count[:10],  # 핫 넘버 TOP 10
-            'cold_numbers': sorted_by_count[-10:],  # 콜드 넘버 10개
+            "total_draws": len(self.winning_data),
+            "number_counts": number_counts,
+            "bonus_counts": bonus_counts,
+            "hot_numbers": sorted_by_count[:10],
+            "cold_numbers": sorted_by_count[-10:],
         }
         return dict(self._frequency_cache)
-    
+
     def get_range_distribution(self) -> Dict[str, int]:
         """번호대별 분포 분석"""
         if self._range_cache is not None:
@@ -357,20 +545,20 @@ class WinningStatsManager:
             return {}
 
         frequency = self.get_frequency_analysis()
-        number_counts = frequency.get('number_counts', {})
+        number_counts = frequency.get("number_counts", {})
         if not isinstance(number_counts, dict):
             return {}
 
         ranges = {
-            '1-10': sum(number_counts.get(i, 0) for i in range(1, 11)),
-            '11-20': sum(number_counts.get(i, 0) for i in range(11, 21)),
-            '21-30': sum(number_counts.get(i, 0) for i in range(21, 31)),
-            '31-40': sum(number_counts.get(i, 0) for i in range(31, 41)),
-            '41-45': sum(number_counts.get(i, 0) for i in range(41, 46)),
+            "1-10": sum(number_counts.get(i, 0) for i in range(1, 11)),
+            "11-20": sum(number_counts.get(i, 0) for i in range(11, 21)),
+            "21-30": sum(number_counts.get(i, 0) for i in range(21, 31)),
+            "31-40": sum(number_counts.get(i, 0) for i in range(31, 41)),
+            "41-45": sum(number_counts.get(i, 0) for i in range(41, 46)),
         }
         self._range_cache = ranges
         return dict(ranges)
-    
+
     def get_pair_analysis(self) -> Dict[str, Any]:
         """연속 당첨 쌍 분석 (같이 나온 번호 쌍)"""
         if self._pair_cache is not None:
@@ -378,22 +566,19 @@ class WinningStatsManager:
 
         if not self.winning_data:
             return {}
-        
-        pair_counts = {}
-        
+
+        pair_counts: Dict[tuple[int, int], int] = {}
         for data in self.winning_data:
-            nums = data['numbers']
+            nums = data["numbers"]
             for i in range(len(nums)):
                 for j in range(i + 1, len(nums)):
                     pair = (nums[i], nums[j])
                     pair_counts[pair] = pair_counts.get(pair, 0) + 1
-        
-        # 가장 많이 나온 쌍 TOP 10
-        sorted_pairs = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)
-        self._pair_cache = {'top_pairs': sorted_pairs[:10]}
-        return dict(self._pair_cache)
-    
-    def get_recent_trend(self, count: int = 10) -> List[Dict[str, Any]]:
-        """최근 N회차 트렌드"""
-        return self.winning_data[:count]
 
+        sorted_pairs = sorted(pair_counts.items(), key=lambda item: item[1], reverse=True)
+        self._pair_cache = {"top_pairs": sorted_pairs[:10]}
+        return dict(self._pair_cache)
+
+    def get_recent_trend(self, count: int = 10) -> List[WinningRecord]:
+        """최근 N회차 트렌드"""
+        return [dict(item) for item in self.winning_data[:count]]

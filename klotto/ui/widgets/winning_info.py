@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 from klotto.core.draws import estimate_latest_draw, normalize_legacy_draw_payload
+from klotto.core.stats import WinningStatsManager
 from klotto.logging import logger
 from klotto.net.client import LottoNetworkManager
 from klotto.ui.theme import ThemeManager
@@ -15,14 +16,16 @@ class WinningInfoWidget(QWidget):
 
     dataLoaded = pyqtSignal(dict)
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, stats_manager: WinningStatsManager, parent=None):
+        super().__init__(parent)
+        self.stats_manager = stats_manager
         self.network_manager = LottoNetworkManager(self)
         self.network_manager.dataLoaded.connect(self._on_data_received)
         self.network_manager.errorOccurred.connect(self._on_error)
 
         self.current_draw_no = estimate_latest_draw()
         self.current_data: Optional[Dict[str, Any]] = None
+        self._pending_draw_no: Optional[int] = None
         self._is_collapsed = False
         self.initUI()
         self.load_winning_info(self.current_draw_no)
@@ -41,11 +44,11 @@ class WinningInfoWidget(QWidget):
         self.toggle_btn.clicked.connect(self._toggle_collapse)
         header_layout.addWidget(self.toggle_btn)
 
-        title_label = QLabel("지난 회차 당첨 정보")
-        title_label.setStyleSheet(
+        self.title_label = QLabel("지난 회차 당첨 정보")
+        self.title_label.setStyleSheet(
             f"font-size: 16px; font-weight: bold; color: {ThemeManager.get_theme()['text_primary']};"
         )
-        header_layout.addWidget(title_label)
+        header_layout.addWidget(self.title_label)
 
         header_layout.addStretch()
 
@@ -106,6 +109,9 @@ class WinningInfoWidget(QWidget):
 
     def _apply_theme(self):
         theme = ThemeManager.get_theme()
+        self.title_label.setStyleSheet(
+            f"font-size: 16px; font-weight: bold; color: {theme['text_primary']};"
+        )
         self.refresh_btn.setStyleSheet(
             f"""
             QPushButton {{
@@ -133,7 +139,7 @@ class WinningInfoWidget(QWidget):
             }}
         """
         )
-        self.status_label.setStyleSheet(f"color: {theme['text_muted']}; font-size: 14px;")
+        self._set_status(self.status_label.text() or "로딩 중...", "muted")
 
     def _toggle_collapse(self):
         self._is_collapsed = not self._is_collapsed
@@ -143,34 +149,36 @@ class WinningInfoWidget(QWidget):
     def _on_refresh_clicked(self):
         self.load_winning_info(self.draw_spinbox.value())
 
-    def load_winning_info(self, draw_no: int):
-        self.refresh_btn.setEnabled(False)
-        self.status_label.setText("로딩 중...")
+    def _set_status(self, text: str, tone: str = "muted"):
+        theme = ThemeManager.get_theme()
+        color_map = {
+            "muted": theme["text_muted"],
+            "accent": theme["accent"],
+            "danger": theme["danger"],
+        }
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(f"color: {color_map.get(tone, theme['text_muted'])}; font-size: 14px;")
         self.status_label.setVisible(True)
-        self.numbers_widget.setVisible(False)
-        self.prize_widget.setVisible(False)
-        self.network_manager.fetch_draw(draw_no)
 
-    def _on_data_received(self, data: dict):
-        normalized = normalize_legacy_draw_payload(data)
-        if not normalized:
-            logger.error("Invalid winning info payload: %s", data)
-            self._on_error("당첨 데이터 형식 오류")
-            return
+    def _clear_layout(self, layout):
+        while layout.count():
+            child = layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
 
-        self.current_data = normalized
-        self.refresh_btn.setEnabled(True)
-        self.status_label.setVisible(False)
+    def _render_draw_data(self, draw_data: Dict[str, Any]):
+        self.current_data = dict(draw_data)
         self._clear_layout(self.numbers_layout)
         self._clear_layout(self.prize_layout)
 
         theme = ThemeManager.get_theme()
-        draw_no = normalized["draw_no"]
-        draw_date = normalized["date"]
-        numbers = normalized["numbers"]
-        bonus = normalized["bonus"]
+        draw_no = int(draw_data["draw_no"])
+        draw_date = str(draw_data.get("date", ""))
+        numbers = list(draw_data["numbers"])
+        bonus = int(draw_data["bonus"])
 
-        date_label = QLabel(f"<b>{draw_no}회</b> ({draw_date})")
+        date_label = QLabel(f"<b>{draw_no}회</b> ({draw_date})" if draw_date else f"<b>{draw_no}회</b>")
         date_label.setStyleSheet(f"font-size: 13px; color: {theme['text_secondary']};")
         self.numbers_layout.addWidget(date_label)
 
@@ -188,35 +196,89 @@ class WinningInfoWidget(QWidget):
         self.numbers_layout.addWidget(bonus_label)
         self.numbers_widget.setVisible(True)
 
-        first_prize = normalized["first_prize"]
-        first_winners = normalized["first_winners"]
-        total_sales = normalized["total_sales"]
+        first_prize = int(draw_data.get("first_prize", 0))
+        first_winners = int(draw_data.get("first_winners", 0))
+        total_sales = int(draw_data.get("total_sales", 0))
 
-        prize_info = QLabel(f"🏆 <b style='color:{theme['danger']};'>1등</b> <b>{first_prize:,}원</b> ({first_winners}명)")
+        if first_prize > 0 and first_winners > 0:
+            prize_text = f"🏆 <b style='color:{theme['danger']};'>1등</b> <b>{first_prize:,}원</b> ({first_winners}명)"
+        else:
+            prize_text = "🏆 1등 정보: <b>정보 없음</b>"
+        prize_info = QLabel(prize_text)
         prize_info.setStyleSheet("font-size: 14px;")
         self.prize_layout.addWidget(prize_info)
 
-        sales_info = QLabel(f"📊 판매액: <b>{total_sales:,}원</b>")
+        if total_sales > 0:
+            sales_text = f"📊 판매액: <b>{total_sales:,}원</b>"
+        else:
+            sales_text = "📊 판매액: <b>정보 없음</b>"
+        sales_info = QLabel(sales_text)
         sales_info.setStyleSheet(f"font-size: 13px; color: {theme['text_secondary']};")
         self.prize_layout.addWidget(sales_info)
 
         self.prize_widget.setVisible(True)
-        self.dataLoaded.emit(data)
 
-    def _on_error(self, error_msg: str):
-        self.refresh_btn.setEnabled(True)
-        self.status_label.setText(f"⚠️ {error_msg}")
-        self.status_label.setStyleSheet(f"color: {ThemeManager.get_theme()['danger']}; font-size: 14px;")
-        self.status_label.setVisible(True)
+    def _reset_view(self):
+        self.current_data = None
+        self._clear_layout(self.numbers_layout)
+        self._clear_layout(self.prize_layout)
         self.numbers_widget.setVisible(False)
         self.prize_widget.setVisible(False)
 
-    def _clear_layout(self, layout):
-        while layout.count():
-            child = layout.takeAt(0)
-            widget = child.widget()
-            if widget is not None:
-                widget.deleteLater()
+    def load_winning_info(self, draw_no: int):
+        self._pending_draw_no = draw_no
+        self.refresh_btn.setEnabled(False)
+
+        cached = self.stats_manager.get_draw_data(draw_no)
+        if cached:
+            self._render_draw_data(cached)
+            self._set_status("DB 캐시 표시 중 · 최신 정보 확인 중", "accent")
+        else:
+            self._reset_view()
+            self._set_status("최신 정보 확인 중", "accent")
+
+        self.network_manager.fetch_draw(draw_no)
+
+    def _on_data_received(self, data: dict):
+        normalized = normalize_legacy_draw_payload(data)
+        if not normalized:
+            logger.error("Invalid winning info payload: %s", data)
+            self._on_error("당첨 데이터 형식 오류")
+            return
+
+        expected_draw_no = self._pending_draw_no
+        if expected_draw_no and normalized["draw_no"] != expected_draw_no:
+            logger.warning("Ignoring stale winning info payload for draw #%s", normalized["draw_no"])
+            return
+
+        status = self.stats_manager.upsert_winning_data(
+            normalized["draw_no"],
+            normalized["numbers"],
+            normalized["bonus"],
+            draw_date=normalized.get("date"),
+            first_prize=normalized.get("first_prize"),
+            first_winners=normalized.get("first_winners"),
+            total_sales=normalized.get("total_sales"),
+        )
+        if status == "invalid":
+            self._on_error("당첨 데이터 저장 오류")
+            return
+
+        draw_data = self.stats_manager.get_draw_data(normalized["draw_no"]) or normalized
+        self._render_draw_data(draw_data)
+        self.refresh_btn.setEnabled(True)
+        self._set_status("최신 정보 반영 완료", "accent")
+        self.dataLoaded.emit(dict(draw_data))
+
+    def _on_error(self, error_msg: str):
+        self.refresh_btn.setEnabled(True)
+
+        if self.current_data is not None:
+            self._set_status(f"네트워크 오류 · DB 캐시 표시 유지 중 ({error_msg})", "danger")
+            return
+
+        self._reset_view()
+        self._set_status(f"네트워크 오류: {error_msg}", "danger")
 
     def get_winning_numbers(self) -> Tuple[List[int], int]:
         if not self.current_data:

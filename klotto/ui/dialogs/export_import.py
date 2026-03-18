@@ -180,7 +180,8 @@ class ExportImportDialog(QDialog):
                 history_sets.append(numbers)
             imported_count = len(self.history_manager.add_many(history_sets))
         else:
-            existing_draws = {entry.get("draw_no") for entry in self.stats_manager.winning_data if isinstance(entry, dict)}
+            updated_count = 0
+            unchanged_count = 0
             for item in data:
                 if not isinstance(item, dict):
                     continue
@@ -190,13 +191,35 @@ class ExportImportDialog(QDialog):
                 draw_date = item.get("date")
                 draw_date_value = draw_date if isinstance(draw_date, str) else None
 
-                if draw_no is None or numbers is None or bonus is None or draw_no in existing_draws:
+                if draw_no is None or numbers is None or bonus is None:
                     continue
 
-                saved = self.stats_manager.add_winning_data(draw_no, numbers, bonus, draw_date=draw_date_value)
-                if saved:
-                    existing_draws.add(draw_no)
+                status = self.stats_manager.upsert_winning_data(
+                    draw_no,
+                    numbers,
+                    bonus,
+                    draw_date=draw_date_value,
+                    first_prize=item.get("first_prize"),
+                    first_winners=item.get("first_winners"),
+                    total_sales=item.get("total_sales"),
+                )
+                if status in {"inserted", "updated"}:
                     imported_count += 1
+                    if status == "updated":
+                        updated_count += 1
+                elif status == "unchanged":
+                    unchanged_count += 1
+
+            if target_idx == 2:
+                QMessageBox.information(
+                    self,
+                    "완료",
+                    (
+                        f"{imported_count}개 항목이 저장/갱신되었습니다.\n"
+                        f"(메타데이터 갱신 {updated_count}건, 이미 최신 {unchanged_count}건)"
+                    ),
+                )
+                return
 
         QMessageBox.information(self, "완료", f"{imported_count}개 항목이 가져와졌습니다.\n(중복 항목은 제외됨)")
 

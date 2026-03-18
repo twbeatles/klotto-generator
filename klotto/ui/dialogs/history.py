@@ -24,7 +24,7 @@ class HistoryDialog(SavedNumbersBaseDialog):
         theme = ThemeManager.get_theme()
 
         header_layout = QHBoxLayout()
-        header_label = QLabel("최근 생성된 번호 조합")
+        header_label = QLabel("저장된 번호 조합")
         header_label.setStyleSheet(
             f"""
             font-size: 18px;
@@ -133,7 +133,7 @@ class HistoryDialog(SavedNumbersBaseDialog):
 
     def _refresh_list(self):
         self.list_widget.clear()
-        history = self.history_manager.get_recent(100)
+        history = self.history_manager.get_all()
         for entry in history:
             numbers_str = " - ".join(f"{number:02d}" for number in entry["numbers"])
             created = entry.get("created_at", "")[:16].replace("T", " ")

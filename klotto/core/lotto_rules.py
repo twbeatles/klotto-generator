@@ -103,6 +103,35 @@ def validate_generation_constraints(
     return None
 
 
+def validate_balance_constraints(
+    fixed_nums: Iterable[int],
+    exclude_nums: Iterable[int],
+    *,
+    total_numbers: int = 6,
+    min_odd_count: int = 2,
+    max_odd_count: int = 4,
+) -> Optional[str]:
+    fixed_set = set(fixed_nums)
+    exclude_set = set(exclude_nums)
+    available = set(range(1, 46)) - fixed_set - exclude_set
+    required = total_numbers - len(fixed_set)
+
+    if required < 0:
+        return "고정수 개수가 전체 번호 개수를 초과했습니다."
+
+    fixed_odd_count = sum(1 for number in fixed_set if number % 2 == 1)
+    available_odd_count = sum(1 for number in available if number % 2 == 1)
+    available_even_count = len(available) - available_odd_count
+
+    min_possible_odd = fixed_odd_count + max(0, required - available_even_count)
+    max_possible_odd = fixed_odd_count + min(required, available_odd_count)
+
+    if min_possible_odd > max_odd_count or max_possible_odd < min_odd_count:
+        return "현재 고정수/제외수 조건으로는 홀짝 균형(홀수 2~4개)을 만족할 수 없습니다."
+
+    return None
+
+
 def count_consecutive_pairs(numbers: Sequence[int]) -> int:
     return sum(1 for index in range(len(numbers) - 1) if numbers[index + 1] == numbers[index] + 1)
 
@@ -129,5 +158,6 @@ __all__ = [
     "normalize_positive_int",
     "parse_number_expression",
     "safe_int",
+    "validate_balance_constraints",
     "validate_generation_constraints",
 ]
