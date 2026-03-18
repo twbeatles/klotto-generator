@@ -1,4 +1,6 @@
-from typing import List, Dict
+from typing import Dict, List
+
+from klotto.core.lotto_rules import calculate_rank, normalize_numbers
 
 # ============================================================
 # 번호 분석기
@@ -9,8 +11,10 @@ class NumberAnalyzer:
     @staticmethod
     def analyze(numbers: List[int]) -> Dict:
         """번호 세트 분석"""
-        if not numbers or len(numbers) != 6:
+        normalized = normalize_numbers(numbers)
+        if not normalized:
             return {}
+        numbers = normalized
         
         total = sum(numbers)
         odd_count = sum(1 for n in numbers if n % 2 == 1)
@@ -50,26 +54,16 @@ class NumberAnalyzer:
     @staticmethod
     def compare_with_winning(numbers: List[int], winning: List[int], bonus: int) -> Dict:
         """당첨 번호와 비교"""
-        if not numbers or not winning:
+        normalized_numbers = normalize_numbers(numbers)
+        normalized_winning = normalize_numbers(winning)
+        if not normalized_numbers or not normalized_winning:
             return {}
-        
-        matched = set(numbers) & set(winning)
+
+        matched = set(normalized_numbers) & set(normalized_winning)
         bonus_matched = bonus in numbers
-        
-        # 등수 계산
         match_count = len(matched)
-        rank = None
-        if match_count == 6:
-            rank = 1
-        elif match_count == 5 and bonus_matched:
-            rank = 2
-        elif match_count == 5:
-            rank = 3
-        elif match_count == 4:
-            rank = 4
-        elif match_count == 3:
-            rank = 5
-        
+        rank = calculate_rank(match_count, bonus_matched)
+
         return {
             'matched': list(matched),
             'match_count': match_count,

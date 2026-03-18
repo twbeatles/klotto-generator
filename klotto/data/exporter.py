@@ -1,7 +1,9 @@
 import json
 import csv
 from typing import Any, List, Dict, Optional
-from klotto.utils import logger
+
+from klotto.core.lotto_rules import normalize_numbers, normalize_positive_int
+from klotto.logging import logger
 
 # ============================================================
 # 데이터 내보내기/가져오기
@@ -11,20 +13,18 @@ class DataExporter:
 
     @staticmethod
     def _normalize_numbers(numbers: Any) -> List[Any]:
-        if not isinstance(numbers, (list, tuple)):
-            numbers = []
+        normalized = normalize_numbers(numbers)
+        if normalized:
+            return normalized
 
-        normalized: List[Any] = []
-        for value in list(numbers)[:6]:
-            try:
-                normalized.append(int(value))
-            except (TypeError, ValueError):
-                normalized.append('')
-
-        while len(normalized) < 6:
-            normalized.append('')
-
-        return normalized
+        values = list(numbers) if isinstance(numbers, (list, tuple, set)) else []
+        padded: List[Any] = []
+        for value in values[:6]:
+            parsed = normalize_positive_int(value)
+            padded.append(parsed if parsed is not None else '')
+        while len(padded) < 6:
+            padded.append('')
+        return padded
     
     @staticmethod
     def export_to_csv(data: List[Dict[str, Any]], filepath: str, data_type: str = 'favorites'):

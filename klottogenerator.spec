@@ -64,6 +64,11 @@ hidden_imports = [
     'PIL.ImageQt',
     'email',
     'PyQt6.QtNetwork',
+    # 런타임 지연 import / 패키지형 UI 모듈
+    'klotto.ui.scanner',
+    'klotto.ui.dialogs',
+    'klotto.ui.main_window',
+    'klotto.ui.widgets',
 ]
 
 

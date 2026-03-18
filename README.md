@@ -113,21 +113,41 @@ python -m compileall klotto scripts run_klotto.py klottogenerator.py
 klotto-generator/
 ├── klotto/                  # 메인 패키지
 │   ├── config.py           # 설정 및 상수
-│   ├── utils.py            # 유틸리티 및 테마 관리
+│   ├── logging.py          # 공용 로거
+│   ├── utils.py            # 호환용 shim (logger/ThemeManager 재노출)
 │   ├── core/               # 핵심 로직
 │   │   ├── analysis.py     # 번호 분석
+│   │   ├── draws.py        # 회차 추정 / API 응답 정규화
 │   │   ├── generator.py    # 번호 생성
+│   │   ├── generation_service.py # 번호 생성 오케스트레이션
+│   │   ├── lotto_rules.py  # 번호 규칙 / 검증 공통 로직
 │   │   ├── stats.py        # 당첨 통계 (SQLite DB 연동)
 │   │   └── sync_service.py # 백그라운드 동기화 서비스
 │   ├── data/               # 데이터 관리
+│   │   ├── exporter.py     # JSON/CSV 내보내기
 │   │   ├── favorites.py    # 즐겨찾기
-│   │   └── history.py      # 히스토리
+│   │   ├── history.py      # 히스토리
+│   │   └── store_utils.py  # JSON atomic 저장 헬퍼
 │   ├── net/                # 네트워크
 │   │   └── client.py       # API 클라이언트
 │   └── ui/                 # UI 컴포넌트
-│       ├── dialogs.py      # 다이얼로그
-│       ├── main_window.py  # 메인 윈도우
-│       └── widgets.py      # 위젯
+│       ├── theme.py        # 테마 관리자 / 전역 스타일시트
+│       ├── dialogs/        # 다이얼로그 패키지
+│       │   ├── qr_code.py
+│       │   ├── statistics.py
+│       │   ├── history.py
+│       │   ├── favorites.py
+│       │   ├── real_stats.py
+│       │   ├── winning_check.py
+│       │   └── export_import.py
+│       ├── main_window/    # 메인 윈도우 패키지
+│       │   ├── window.py
+│       │   ├── controls_panel.py
+│       │   └── results_panel.py
+│       └── widgets/        # 위젯 패키지
+│           ├── lotto_ball.py
+│           ├── result_row.py
+│           └── winning_info.py
 ├── data/                    # 로또 역대 당첨 DB (생성/동봉 시)
 │   └── lotto_history.db    # SQLite DB (1회~현재)
 ├── scripts/                 # 유틸리티 스크립트
@@ -138,7 +158,7 @@ klotto-generator/
 │   ├── scrape_lotto_history.py   # DB 스크래핑
 │   └── export_to_excel.py        # 엑셀 내보내기
 ├── run_klotto.py            # 실행 진입점
-├── klottogenerator.py       # 레거시 단일 파일 버전 (호환 유지)
+├── klottogenerator.py       # 레거시 호환 래퍼 (패키지 모듈 재노출)
 ├── klottogenerator.spec     # PyInstaller 설정
 ├── requirements.txt         # 기본 실행 의존성
 ├── requirements-optional.txt # QR/엑셀 선택 의존성
@@ -185,6 +205,12 @@ klotto-generator/
 
 ## 📝 변경 이력
 
+### v2.5 유지보수 (2026-03-18)
+- ✅ `ui/dialogs`, `ui/widgets`, `ui/main_window`를 패키지로 재구성하고 역할별 파일 분리
+- 🧩 공통 규칙/정규화 로직 분리 (`core/lotto_rules.py`, `core/draws.py`, `core/generation_service.py`)
+- 🧹 `klottogenerator.py`를 호환 래퍼로 축소하고 `utils.py`를 shim으로 정리
+- 📦 PyInstaller spec에 지연 import 모듈(`klotto.ui.scanner`) hidden import 보강
+
 ### v2.5 유지보수 (2026-03-15)
 - ✅ 선택적 네이티브 의존성(`cv2`, `pyzbar`) import를 Pylance 친화적으로 정리
 - 🧪 `.venv` 기반 워크스페이스/Pyright 설정 정합성 강화
@@ -230,4 +256,3 @@ klotto-generator/
 - 🎨 3D 로또 공 디자인
 
 ---
-

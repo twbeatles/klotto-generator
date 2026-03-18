@@ -3,8 +3,10 @@ import urllib.error
 import urllib.request
 from typing import Any, Optional
 from PyQt6.QtCore import QThread, pyqtSignal, QObject
-from klotto.utils import logger
+
 from klotto.config import DHLOTTERY_API_URL, APP_CONFIG
+from klotto.core.draws import convert_new_api_response
+from klotto.logging import logger
 
 # ============================================================
 # API 워커 (QThread 기반 - 안정적인 urllib 사용)
@@ -21,45 +23,6 @@ class LottoApiWorker(QThread):
     
     def cancel(self):
         self._is_cancelled = True
-    
-    def _convert_new_format_to_old(self, new_data: dict[str, Any]) -> Optional[dict[str, Any]]:
-        """새 API 응답 형식을 기존 형식으로 변환"""
-        # 새 API 형식:
-        # { "data": { "list": [{ "ltEpsd": 1205, "tm1WnNo": 1, ... }] } }
-        # 기존 형식:
-        # { "returnValue": "success", "drwNo": 1205, "drwtNo1": 1, ... }
-        
-        try:
-            data_list = new_data.get('data', {}).get('list', [])
-            if not data_list:
-                return None
-            
-            item = data_list[0]  # 첫 번째 항목 사용
-            
-            return {
-                'returnValue': 'success',
-                'drwNo': item.get('ltEpsd'),
-                'drwNoDate': self._format_date(item.get('ltRflYmd', '')),
-                'drwtNo1': item.get('tm1WnNo'),
-                'drwtNo2': item.get('tm2WnNo'),
-                'drwtNo3': item.get('tm3WnNo'),
-                'drwtNo4': item.get('tm4WnNo'),
-                'drwtNo5': item.get('tm5WnNo'),
-                'drwtNo6': item.get('tm6WnNo'),
-                'bnusNo': item.get('bnsWnNo'),
-                'firstWinamnt': item.get('rnk1WnAmt', 0),
-                'firstPrzwnerCo': item.get('rnk1WnNope', 0),
-                'totSellamnt': item.get('rlvtEpsdSumNtslAmt', 0),
-            }
-        except Exception as e:
-            logger.error(f"Error converting new API format: {e}")
-            return None
-    
-    def _format_date(self, date_str: str) -> str:
-        """날짜 형식 변환: '20260103' -> '2026-01-03'"""
-        if len(date_str) == 8:
-            return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-        return date_str
     
     def run(self):
         total = len(self.draw_nos)
@@ -98,7 +61,7 @@ class LottoApiWorker(QThread):
                     new_data = json.loads(raw_data)
                     
                     # 새 형식을 기존 형식으로 변환
-                    converted_data = self._convert_new_format_to_old(new_data)
+                    converted_data = convert_new_api_response(new_data)
                     
                     if converted_data and converted_data.get('drwNo'):
                         logger.info(f"Successfully fetched draw #{draw_no}")

@@ -5,7 +5,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, List, Dict, Optional, Tuple, cast
 from klotto.config import APP_CONFIG
-from klotto.utils import logger
+from klotto.core.lotto_rules import normalize_bonus, normalize_numbers, normalize_positive_int
+from klotto.logging import logger
 
 # ============================================================
 # 역대 당첨 번호 통계 관리
@@ -114,20 +115,12 @@ class WinningStatsManager:
 
     def _normalize_draw_input(self, draw_no: Any, numbers: List[Any], bonus: Any) -> Optional[Tuple[int, List[int], int]]:
         """입력 당첨 데이터 정규화 및 검증"""
-        try:
-            parsed_draw_no = int(draw_no)
-            parsed_numbers = sorted(int(n) for n in numbers)
-            parsed_bonus = int(bonus)
-        except (TypeError, ValueError):
+        parsed_draw_no = normalize_positive_int(draw_no)
+        parsed_numbers = normalize_numbers(numbers)
+        if parsed_draw_no is None or parsed_numbers is None:
             return None
-
-        if parsed_draw_no <= 0:
-            return None
-        if len(parsed_numbers) != 6 or len(set(parsed_numbers)) != 6:
-            return None
-        if any(n < 1 or n > 45 for n in parsed_numbers):
-            return None
-        if parsed_bonus < 1 or parsed_bonus > 45 or parsed_bonus in parsed_numbers:
+        parsed_bonus = normalize_bonus(bonus, parsed_numbers)
+        if parsed_bonus is None:
             return None
 
         return parsed_draw_no, parsed_numbers, parsed_bonus

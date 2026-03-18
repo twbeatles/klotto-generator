@@ -18,7 +18,10 @@ Thumbs.db
 .ruff_cache/
 .pyright/
 .coverage
+.coverage.*
 htmlcov/
+.hypothesis/
+.pyre/
 
 # Local runtime artifacts
 .lotto_generator/
@@ -26,3 +29,7 @@ htmlcov/
 *.tmp
 *.bak
 lotto_history_*.xlsx
+
+# Packaging / local metadata
+*.egg-info/
+.pyinstaller/

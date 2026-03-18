@@ -1,10 +1,8 @@
-import json
 import datetime
-import os
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Set
 from klotto.config import APP_CONFIG
-from klotto.utils import logger
+from klotto.data.store_utils import load_json_data, save_json_atomic
 
 # ============================================================
 # 즐겨찾기 관리
@@ -72,41 +70,13 @@ class FavoritesManager:
             self._rebuild_index()
             return
 
-        try:
-            if favorites_file.exists():
-                with open(favorites_file, 'r', encoding='utf-8') as f:
-                    self.favorites = json.load(f)
-                logger.info(f"Loaded {len(self.favorites)} favorites")
-        except Exception as e:
-            logger.error(f"Failed to load favorites: {e}")
-            self.favorites = []
-        finally:
-            self._rebuild_index()
+        loaded = load_json_data(favorites_file, "favorites", [])
+        self.favorites = loaded if isinstance(loaded, list) else []
+        self._rebuild_index()
     
     def _save(self):
         """즐겨찾기를 파일에 저장 (Atomic)"""
-        favorites_file = self.favorites_file
-        if favorites_file is None:
-            return
-
-        temp_file: Optional[Path] = None
-        try:
-            favorites_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = favorites_file.with_suffix('.tmp')
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(self.favorites, f, ensure_ascii=False, indent=2)
-            
-            if favorites_file.exists():
-                os.replace(temp_file, favorites_file)
-            else:
-                os.rename(temp_file, favorites_file)
-            logger.info(f"Saved {len(self.favorites)} favorites")
-        except Exception as e:
-            logger.error(f"Failed to save favorites: {e}")
-            try:
-                if temp_file and temp_file.exists():
-                    temp_file.unlink()
-            except: pass
+        save_json_atomic(self.favorites_file, self.favorites, "favorites")
     
     def add(self, numbers: List[int], memo: str = "", save: bool = True) -> bool:
         """즐겨찾기 추가"""

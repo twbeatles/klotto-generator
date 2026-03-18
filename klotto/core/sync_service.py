@@ -9,15 +9,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional, cast
 from PyQt6.QtCore import QThread, pyqtSignal
 from klotto.config import APP_CONFIG
-from klotto.utils import logger
+from klotto.core.draws import convert_new_api_response, estimate_latest_draw, normalize_legacy_draw_payload
+from klotto.logging import logger
 
 
 class LottoSyncWorker(QThread):
     """백그라운드에서 최신 당첨 정보를 동기화하는 워커"""
     finished = pyqtSignal(int)  # 동기화된 회차 수
     error = pyqtSignal(str)
-    
-    API_URL = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do?srchLtEpsd={}"
     
     def __init__(self, db_path: Path):
         super().__init__()
@@ -41,24 +40,10 @@ class LottoSyncWorker(QThread):
             logger.error(f"Failed to read last draw number: {e}")
             return 0
     
-    def _estimate_current_draw(self) -> int:
-        """현재 회차 추정"""
-        import datetime
-        base_date = datetime.date(2002, 12, 7)
-        today = datetime.date.today()
-        days_diff = (today - base_date).days
-        estimated = days_diff // 7 + 1
-        
-        # 토요일 21시 전이면 이전 회차
-        now = datetime.datetime.now()
-        if today.weekday() == 5 and now.hour < 21:
-            estimated -= 1
-        return estimated
-    
     def _fetch_draw(self, draw_no: int) -> Optional[Dict[str, Any]]:
         """API에서 회차 정보 가져오기"""
         try:
-            url = self.API_URL.format(draw_no)
+            url = "https://www.dhlottery.co.kr/lt645/selectPstLt645Info.do?srchLtEpsd={}".format(draw_no)
             req = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://www.dhlottery.co.kr/lt645/result',
@@ -69,27 +54,23 @@ class LottoSyncWorker(QThread):
             with urllib.request.urlopen(req, timeout=10) as response:
                 data = response.read().decode('utf-8')
                 result = json.loads(data)
-                
-                # 새 API 형식 처리
-                if 'data' in result and 'list' in result['data']:
-                    item = result['data']['list'][0]
-                    date_str = str(item.get('ltRflYmd', ''))
-                    if len(date_str) == 8:
-                        date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-                    
+
+                legacy_payload = convert_new_api_response(result)
+                normalized = normalize_legacy_draw_payload(legacy_payload or {})
+                if normalized:
                     return {
-                        'draw_no': item.get('ltEpsd'),
-                        'date': date_str,
-                        'num1': item.get('tm1WnNo'),
-                        'num2': item.get('tm2WnNo'),
-                        'num3': item.get('tm3WnNo'),
-                        'num4': item.get('tm4WnNo'),
-                        'num5': item.get('tm5WnNo'),
-                        'num6': item.get('tm6WnNo'),
-                        'bonus': item.get('bnsWnNo'),
-                        'prize_amount': item.get('rnk1WnAmt', 0),
-                        'winners_count': item.get('rnk1WnNope', 0),
-                        'total_sales': item.get('rlvtEpsdSumNtslAmt', 0),
+                        'draw_no': normalized['draw_no'],
+                        'date': normalized['date'],
+                        'num1': normalized['numbers'][0],
+                        'num2': normalized['numbers'][1],
+                        'num3': normalized['numbers'][2],
+                        'num4': normalized['numbers'][3],
+                        'num5': normalized['numbers'][4],
+                        'num6': normalized['numbers'][5],
+                        'bonus': normalized['bonus'],
+                        'prize_amount': normalized['first_prize'],
+                        'winners_count': normalized['first_winners'],
+                        'total_sales': normalized['total_sales'],
                     }
                 return None
         except Exception as e:
@@ -144,7 +125,7 @@ class LottoSyncWorker(QThread):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
         last_draw = self._get_last_draw_no()
-        current_draw = self._estimate_current_draw()
+        current_draw = estimate_latest_draw()
         
         if last_draw >= current_draw:
             logger.info(f"DB is up to date (last: {last_draw})")
