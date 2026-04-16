@@ -1,174 +1,59 @@
-import datetime
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Set
-from klotto.config import APP_CONFIG
-from klotto.data.store_utils import load_json_data, save_json_atomic
+﻿from __future__ import annotations
 
-# ============================================================
-# 히스토리 관리
-# ============================================================
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from klotto.data.app_state import AppStateStore, get_shared_store
+
+
 class HistoryManager:
-    """생성된 번호 히스토리 관리"""
-    
-    def __init__(self):
-        history_file = APP_CONFIG.get('HISTORY_FILE')
-        self.history_file: Optional[Path] = history_file if isinstance(history_file, Path) else None
-        self.history: List[Dict] = []
-        self._history_keys: Set[Tuple[int, ...]] = set()
-        self._stats_cache: Optional[Dict] = None
-        self._load()
+    """Backward-compatible wrapper over the unified app-state store."""
 
-    @staticmethod
-    def _numbers_to_key(numbers: List[int], validate: bool = False) -> Optional[Tuple[int, ...]]:
-        try:
-            normalized = tuple(sorted(int(n) for n in numbers))
-        except (TypeError, ValueError):
-            return None
+    def __init__(self, store: Optional[AppStateStore] = None):
+        self.store = store or get_shared_store()
 
-        if not validate:
-            return normalized
-
-        if len(normalized) != 6 or len(set(normalized)) != 6:
-            return None
-        if any(n < 1 or n > 45 for n in normalized):
-            return None
-        return normalized
-
-    def _rebuild_index(self):
-        normalized_history: List[Dict] = []
-        self._history_keys.clear()
-
-        for entry in self.history:
-            if not isinstance(entry, dict):
-                continue
-
-            key = self._numbers_to_key(entry.get('numbers', []), validate=True)
-            if not key or key in self._history_keys:
-                continue
-
-            created_at = entry.get('created_at')
-            if not isinstance(created_at, str):
-                created_at = datetime.datetime.now().isoformat()
-
-            normalized_history.append({
-                'numbers': list(key),
-                'created_at': created_at
-            })
-            self._history_keys.add(key)
-
-        self.history = normalized_history
-        self._trim_to_max()
-        self._stats_cache = None
-
-    def _trim_to_max(self):
-        max_history = APP_CONFIG['MAX_HISTORY']
-        while len(self.history) > max_history:
-            removed = self.history.pop()
-            key = self._numbers_to_key(removed.get('numbers', []))
-            if key:
-                self._history_keys.discard(key)
-    
-    def _load(self):
-        """파일에서 히스토리 로드"""
-        history_file = self.history_file
-        if history_file is None:
-            self.history = []
-            self._rebuild_index()
-            return
-
-        loaded = load_json_data(history_file, "history", [])
-        self.history = loaded if isinstance(loaded, list) else []
-        self._rebuild_index()
-    
-    def _save(self):
-        """히스토리를 파일에 저장 (Atomic)"""
-        save_json_atomic(self.history_file, self.history, "history")
-    
     def add(self, numbers: List[int], save: bool = True) -> bool:
-        """히스토리에 추가 (중복 체크)"""
-        key = self._numbers_to_key(numbers, validate=True)
-        if not key:
-            return False
+        added = self.store.add_history_entry(numbers, save=False)
+        if added and save:
+            self.store.save()
+        return added
 
-        if key in self._history_keys:
-            return False
+    def add_many(self, numbers_sets: List[Any]) -> List[List[int]]:
+        return self.store.add_history_many(numbers_sets)
 
-        self.history.insert(0, {
-            'numbers': list(key),
-            'created_at': datetime.datetime.now().isoformat()
-        })
-        self._history_keys.add(key)
-        self._trim_to_max()
-        self._stats_cache = None
-
-        if save:
-            self._save()
-        return True
-
-    def add_many(self, numbers_sets: List[List[int]]) -> List[List[int]]:
-        """히스토리에 여러 조합 추가 (단일 파일 저장)"""
-        added_sets: List[List[int]] = []
-        changed = False
-
-        for numbers in numbers_sets:
-            if self.add(numbers, save=False):
-                key = self._numbers_to_key(numbers)
-                if key:
-                    added_sets.append(list(key))
-                changed = True
-
-        if changed:
-            self._save()
-            self._stats_cache = None
-
-        return added_sets
-    
     def is_duplicate(self, numbers: List[int]) -> bool:
-        """중복 조합인지 확인"""
-        key = self._numbers_to_key(numbers)
-        if not key:
-            return False
-        return key in self._history_keys
+        return tuple(numbers) in self.get_number_keys()
 
     def get_number_keys(self) -> Set[Tuple[int, ...]]:
-        """중복 확인용 번호 키 집합 반환"""
-        return set(self._history_keys)
-    
-    def get_all(self) -> List[Dict]:
-        return self.history.copy()
-    
-    def get_recent(self, count: int = 50) -> List[Dict]:
-        """최근 N개 히스토리"""
-        return self.history[:count]
-    
-    def clear(self):
-        """히스토리 전체 삭제"""
-        self.history = []
-        self._history_keys.clear()
-        self._stats_cache = None
-        self._save()
-    
-    def get_statistics(self) -> Dict:
-        """히스토리 기반 통계"""
-        if self._stats_cache is not None:
-            return dict(self._stats_cache)
+        return self.store.get_history_number_keys()
 
-        if not self.history:
+    def get_all(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                'numbers': list(entry.get('numbers', [])),
+                'date': entry.get('date', ''),
+                'created_at': entry.get('date', ''),
+            }
+            for entry in self.store.state['history']
+        ]
+
+    def get_recent(self, count: int = 50) -> List[Dict[str, Any]]:
+        return self.get_all()[:count]
+
+    def clear(self) -> None:
+        self.store.clear_history()
+
+    def get_statistics(self) -> Dict[str, Any]:
+        history = self.get_all()
+        if not history:
             return {}
-        
-        # 번호별 출현 횟수
         number_counts = {i: 0 for i in range(1, 46)}
-        for h in self.history:
-            for num in h['numbers']:
-                number_counts[num] += 1
-        
-        # 정렬
-        sorted_by_count = sorted(number_counts.items(), key=lambda x: x[1], reverse=True)
-        
-        self._stats_cache = {
-            'total_sets': len(self.history),
+        for entry in history:
+            for number in entry.get('numbers', []):
+                number_counts[int(number)] += 1
+        sorted_by_count = sorted(number_counts.items(), key=lambda item: item[1], reverse=True)
+        return {
+            'total_sets': len(history),
             'number_counts': number_counts,
             'most_common': sorted_by_count[:10],
-            'least_common': sorted_by_count[-10:]
+            'least_common': sorted_by_count[-10:],
         }
-        return dict(self._stats_cache)

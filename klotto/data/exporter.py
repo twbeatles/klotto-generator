@@ -70,6 +70,17 @@ class DataExporter:
         except Exception as e:
             logger.error(f"Failed to export JSON: {e}")
             return False
+
+    @staticmethod
+    def export_any_json(data: Any, filepath: str):
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Exported JSON payload to {filepath}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to export generic JSON: {e}")
+            return False
     
     @staticmethod
     def import_from_json(filepath: str) -> Optional[List[Dict[str, Any]]]:
@@ -81,4 +92,15 @@ class DataExporter:
             return data
         except Exception as e:
             logger.error(f"Failed to import JSON: {e}")
+            return None
+
+    @staticmethod
+    def import_any_json(filepath: str) -> Any:
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            logger.info(f"Imported generic JSON from {filepath}")
+            return data
+        except Exception as e:
+            logger.error(f"Failed to import generic JSON: {e}")
             return None

@@ -1,70 +1,42 @@
-import json
-from pathlib import Path
-from typing import Dict, Any, Optional
-from ..config import APP_CONFIG
-from ..utils import logger
+﻿from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+from klotto.data.app_state import AppStateStore, get_shared_store
+
 
 class SettingsManager:
-    """사용자 설정 관리자 (윈도우 크기, 테마, 옵션 등)"""
-    
-    def __init__(self):
-        settings_file = APP_CONFIG.get('SETTINGS_FILE')
-        self.settings_file: Optional[Path] = settings_file if isinstance(settings_file, Path) else None
-        self.settings: Dict[str, Any] = {
-            'theme': 'light',
-            'window_geometry': None,
-            'options': {
-                'num_sets': 5,
-                'fixed_nums': '',
-                'exclude_nums': '',
-                'check_consecutive': False,
-                'consecutive_limit': 3,
-                'compare_mode': False,
-                'smart_gen': True
-            }
-        }
-        if self.settings_file:
-            self._load()
-    
-    def _load(self):
-        settings_file = self.settings_file
-        if settings_file is None:
-            return
+    """Compatibility layer that persists settings inside the unified app state."""
 
-        try:
-            if settings_file.exists():
-                with open(settings_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    # 병합 (누락된 키 보존)
-                    self.settings.update(data)
-                    # options 내부도 병합
-                    if 'options' in data:
-                         self.settings['options'].update(data['options'])
-                logger.info("Settings loaded")
-        except Exception as e:
-            logger.error(f"Failed to load settings: {e}")
+    def __init__(self, store: Optional[AppStateStore] = None):
+        self.store = store or get_shared_store()
+
+    @property
+    def settings(self) -> Dict[str, Any]:
+        return {
+            'theme': self.store.state.get('theme', 'light'),
+            'window_geometry': self.store.state.get('windowGeometry'),
+            'options': dict(self.store.state.get('generatorOptions') or {}),
+        }
 
     def save(self):
-        settings_file = self.settings_file
-        if settings_file is None:
-            return
-
-        try:
-            settings_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(settings_file, 'w', encoding='utf-8') as f:
-                json.dump(self.settings, f, indent=2)
-            logger.info("Settings saved")
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
+        self.store.save()
 
     def get(self, key: str, default=None):
         return self.settings.get(key, default)
 
     def set(self, key: str, value: Any):
-        self.settings[key] = value
-    
+        if key == 'theme':
+            self.store.state['theme'] = value
+        elif key == 'window_geometry':
+            self.store.state['windowGeometry'] = value
+        else:
+            self.store.state[key] = value
+
     def get_option(self, key: str, default=None):
-        return self.settings['options'].get(key, default)
+        return (self.store.state.get('generatorOptions') or {}).get(key, default)
 
     def set_option(self, key: str, value: Any):
-        self.settings['options'][key] = value
+        options = dict(self.store.state.get('generatorOptions') or {})
+        options[key] = value
+        self.store.state['generatorOptions'] = options

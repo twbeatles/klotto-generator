@@ -42,17 +42,23 @@ def _get_db_path() -> Path:
         # 개발 환경에서 data 폴더 경로
         return Path(__file__).resolve().parent.parent / "data" / "lotto_history.db"
 
+
+def _get_user_data_dir() -> Path:
+    return Path.home() / ".lotto_generator"
+
 # ============================================================
 # 상수 정의
 # ============================================================
 APP_CONFIG = {
     'APP_NAME': 'Lotto 6/45 Generator Pro',
-    'VERSION': '2.5',
-    'WINDOW_SIZE': (680, 980),
-    'SETTINGS_FILE': Path.home() / ".lotto_generator" / "settings.json",
-    'FAVORITES_FILE': Path.home() / ".lotto_generator" / "favorites.json",
-    'HISTORY_FILE': Path.home() / ".lotto_generator" / "history.json",
-    'WINNING_STATS_FILE': Path.home() / ".lotto_generator" / "winning_stats.json",
+    'VERSION': '3.0',
+    'WINDOW_SIZE': (1480, 960),
+    'APP_DATA_DIR': _get_user_data_dir(),
+    'SETTINGS_FILE': _get_user_data_dir() / "settings.json",
+    'FAVORITES_FILE': _get_user_data_dir() / "favorites.json",
+    'HISTORY_FILE': _get_user_data_dir() / "history.json",
+    'APP_STATE_FILE': _get_user_data_dir() / "app_state.json",
+    'WINNING_STATS_FILE': _get_user_data_dir() / "winning_stats.json",
     'LOTTO_HISTORY_DB': _get_db_path(),
     'MAX_SETS': 20,
     'MAX_FIXED_NUMS': 6,
@@ -60,6 +66,15 @@ APP_CONFIG = {
     'API_TIMEOUT': 10,
     'MAX_HISTORY': 500,
     'WINNING_STATS_CACHE_SIZE': 100,
+    'SYNC_RECENT_WINDOW': 20,
+    'ALLOWED_MISSING_DRAWS': [146],
+    'LATEST_DRAW_STALE_THRESHOLD': 2,
+    'MAX_BACKTEST_SPAN': 120,
+    'MAX_COMPARE_STRATEGIES': 5,
+    'MAX_CAMPAIGN_WEEKS': 24,
+    'MAX_CAMPAIGN_SETS_PER_WEEK': 20,
+    'MAX_CAMPAIGN_TOTAL_TICKETS': 300,
+    'MAX_STRATEGY_PRESETS': 30,
 }
 
 LOTTO_COLORS = {

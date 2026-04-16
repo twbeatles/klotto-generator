@@ -1,74 +1,94 @@
-# -*- mode: python ; coding: utf-8 -*-
-"""
-Lotto Generator Pro v2.5 - PyInstaller Spec File (Onefile Mode)
-빌드 명령어: pyinstaller klottogenerator.spec
-엔트리 포인트: run_klotto.py
-"""
+﻿# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec for Lotto Generator Pro v3.0 (onefile)."""
 
 import sys
 from importlib.util import find_spec
 from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_dynamic_libs
 
-# 프로젝트 경로
 project_path = Path(SPECPATH)
 is_windows = sys.platform.startswith('win')
 
-# NOTE:
-# 일부 Windows 환경에서 dist/LottoGeneratorPro_v25.exe 경로에 대한 쓰기 권한 충돌이 발생해
-# 빌드 마지막 단계(copyfile)가 실패한다.
-# 기본 출력 파일명을 변경해 충돌 가능성을 줄이고, 필요 시 name 값을 원래대로 조정 가능.
-output_name = 'LottoGeneratorPro_v25'
+output_name = 'LottoGeneratorPro_v30'
 entry_script = 'run_klotto.py'
 
-# =============================================================================
-# 경량화 설정
-# =============================================================================
-# 불필요한 모듈 제외 목록 (용량 최적화)
 exclude_modules = [
-    # 과학/데이터 라이브러리
-    'matplotlib', 'pandas', 'scipy', 'sklearn',
-    
-    # 테스트/개발 도구
-    'test', 'tests', 'unittest', 'pytest', 'doctest',
-    'setuptools', 'pip', 'wheel',
-    
-    # 불필요한 UI 프레임워크
-    'tkinter', 'wx', 'PySide6', 'PySide2',
-    
-    # PyQt6 불필요 모듈
-    'PyQt6.QtBluetooth', 'PyQt6.QtDBus', 'PyQt6.QtDesigner',
-    'PyQt6.QtHelp', 'PyQt6.QtMultimedia', 'PyQt6.QtMultimediaWidgets',
-    'PyQt6.QtNfc', 'PyQt6.QtOpenGL',
-    'PyQt6.QtOpenGLWidgets', 'PyQt6.QtPositioning', 'PyQt6.QtPrintSupport',
-    'PyQt6.QtQml', 'PyQt6.QtQuick', 'PyQt6.QtQuick3D', 'PyQt6.QtQuickWidgets',
-    'PyQt6.QtRemoteObjects', 'PyQt6.QtSensors', 'PyQt6.QtSerialPort',
-    'PyQt6.QtSpatialAudio', 'PyQt6.QtSql', 'PyQt6.QtSvg', 'PyQt6.QtSvgWidgets',
-    'PyQt6.QtTest', 'PyQt6.QtTextToSpeech', 'PyQt6.QtWebChannel',
-    'PyQt6.QtWebEngineCore', 'PyQt6.QtWebEngineQuick', 'PyQt6.QtWebEngineWidgets',
-    'PyQt6.QtWebSockets', 'PyQt6.QtXml',
-    
-    # 기타
-    'html', 'http.server', 'xmlrpc',
-    'multiprocessing', 'concurrent', 'asyncio',
-    'bz2', 'lzma',
-    # 'sqlite3' - 이제 필요함 (로또 히스토리 DB)
+    'matplotlib',
+    'pandas',
+    'scipy',
+    'sklearn',
+    'test',
+    'tests',
+    'unittest',
+    'pytest',
+    'doctest',
+    'setuptools',
+    'pip',
+    'wheel',
+    'tkinter',
+    'wx',
+    'PySide6',
+    'PySide2',
+    'PyQt6.QtBluetooth',
+    'PyQt6.QtDBus',
+    'PyQt6.QtDesigner',
+    'PyQt6.QtHelp',
+    'PyQt6.QtMultimedia',
+    'PyQt6.QtMultimediaWidgets',
+    'PyQt6.QtNfc',
+    'PyQt6.QtOpenGL',
+    'PyQt6.QtOpenGLWidgets',
+    'PyQt6.QtPositioning',
+    'PyQt6.QtPrintSupport',
+    'PyQt6.QtQml',
+    'PyQt6.QtQuick',
+    'PyQt6.QtQuick3D',
+    'PyQt6.QtQuickWidgets',
+    'PyQt6.QtRemoteObjects',
+    'PyQt6.QtSensors',
+    'PyQt6.QtSerialPort',
+    'PyQt6.QtSpatialAudio',
+    'PyQt6.QtSql',
+    'PyQt6.QtSvg',
+    'PyQt6.QtSvgWidgets',
+    'PyQt6.QtTest',
+    'PyQt6.QtTextToSpeech',
+    'PyQt6.QtWebChannel',
+    'PyQt6.QtWebEngineCore',
+    'PyQt6.QtWebEngineQuick',
+    'PyQt6.QtWebEngineWidgets',
+    'PyQt6.QtWebSockets',
+    'PyQt6.QtXml',
+    'html',
+    'http.server',
+    'xmlrpc',
+    'multiprocessing',
+    'concurrent',
+    'asyncio',
+    'bz2',
+    'lzma',
 ]
 
-# 필수 hidden imports
 hidden_imports = [
     'PyQt6.QtCore',
-    'PyQt6.QtGui', 
+    'PyQt6.QtGui',
     'PyQt6.QtWidgets',
+    'PyQt6.QtNetwork',
     'qrcode',
     'PIL.ImageQt',
     'email',
-    'PyQt6.QtNetwork',
-    # 런타임 지연 import / 패키지형 UI 모듈
-    'klotto.ui.scanner',
+    'klotto.core.backtest',
+    'klotto.core.strategy_catalog',
+    'klotto.core.strategy_engine',
+    'klotto.core.strategy_filters',
+    'klotto.data.app_state',
+    'klotto.data.models',
     'klotto.ui.dialogs',
     'klotto.ui.main_window',
+    'klotto.ui.scanner',
     'klotto.ui.widgets',
+    'klotto.ui.widgets.strategy_editor',
 ]
 
 
@@ -79,7 +99,6 @@ def has_module(name):
 optional_hidden_imports = []
 optional_binaries = []
 
-# QR 스캐너 기능은 선택 의존성이 설치된 빌드 환경에서만 함께 번들링한다.
 if has_module('numpy'):
     optional_hidden_imports.append('numpy')
 
@@ -91,39 +110,50 @@ if has_module('pyzbar'):
     optional_hidden_imports.append('pyzbar.pyzbar')
     optional_binaries.extend(collect_dynamic_libs('pyzbar'))
 
+
 a = Analysis(
     [entry_script],
     pathex=[str(project_path)],
     binaries=optional_binaries,
-    # 로또 히스토리 DB 포함 (파일이 존재할 때만 번들에 추가)
     datas=[
         (str(project_path / 'data' / 'lotto_history.db'), 'data'),
     ] if (project_path / 'data' / 'lotto_history.db').exists() else [],
     hiddenimports=hidden_imports + optional_hidden_imports,
-
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=exclude_modules,
     noarchive=False,
-    optimize=2,  # 최대 최적화 (-OO)
+    optimize=2,
 )
 
-# =============================================================================
-# 추가 경량화: 불필요한 바이너리/데이터 필터링
-# =============================================================================
-# Qt 관련 불필요 파일 제거
+
 def filter_binaries(binaries):
     exclude_patterns = [
-        'Qt6Quick', 'Qt6Qml',
-        'Qt6Sql', 'Qt6Svg', 'Qt6Pdf',
-        'Qt6Multimedia', 'Qt6Sensors', 'Qt6Bluetooth',
-        'Qt6SerialPort', 'Qt6Test', 'Qt6DBus',
-        'opengl32sw', 'd3dcompiler',
-        'QtBluetooth', 'QtMultimedia',
-        'QtPositioning', 'QtQml', 'QtQuick', 'QtSensors',
-        'QtWebEngine', 'QtWebSockets',
-        'icudt', 'icuin', 'icuuc',  # ICU 라이브러리 (대용량)
+        'Qt6Quick',
+        'Qt6Qml',
+        'Qt6Sql',
+        'Qt6Svg',
+        'Qt6Pdf',
+        'Qt6Multimedia',
+        'Qt6Sensors',
+        'Qt6Bluetooth',
+        'Qt6SerialPort',
+        'Qt6Test',
+        'Qt6DBus',
+        'opengl32sw',
+        'd3dcompiler',
+        'QtBluetooth',
+        'QtMultimedia',
+        'QtPositioning',
+        'QtQml',
+        'QtQuick',
+        'QtSensors',
+        'QtWebEngine',
+        'QtWebSockets',
+        'icudt',
+        'icuin',
+        'icuuc',
     ]
     filtered = []
     for name, path, type_ in binaries:
@@ -131,13 +161,17 @@ def filter_binaries(binaries):
             filtered.append((name, path, type_))
     return filtered
 
-a.binaries = filter_binaries(a.binaries)
 
-# 불필요한 데이터 파일 제거
+
 def filter_datas(datas):
     exclude_patterns = [
-        'translations', 'examples', 'doc', 'docs',
-        'test', 'tests', '__pycache__',
+        'translations',
+        'examples',
+        'doc',
+        'docs',
+        'test',
+        'tests',
+        '__pycache__',
     ]
     filtered = []
     for dest, src, type_ in datas:
@@ -145,6 +179,9 @@ def filter_datas(datas):
             filtered.append((dest, src, type_))
     return filtered
 
+
+
+a.binaries = filter_binaries(a.binaries)
 a.datas = filter_datas(a.datas)
 
 pyz = PYZ(
@@ -153,9 +190,6 @@ pyz = PYZ(
     cipher=None,
 )
 
-# =============================================================================
-# ONEFILE 모드 설정
-# =============================================================================
 exe = EXE(
     pyz,
     a.scripts,
@@ -165,53 +199,24 @@ exe = EXE(
     name=output_name,
     debug=False,
     bootloader_ignore_signals=False,
-    strip=not is_windows,  # Windows에서는 strip 툴 부재로 경고/실패 가능성 있음
-    upx=not is_windows,    # Windows onefile 안정성 우선
+    strip=not is_windows,
+    upx=not is_windows,
     upx_exclude=[
         'vcruntime140.dll',
         'python*.dll',
         'Qt6Core.dll',
-        'Qt6Gui.dll', 
+        'Qt6Gui.dll',
         'Qt6Widgets.dll',
     ],
     runtime_tmpdir=None,
-    console=False,  # GUI 앱이므로 콘솔 창 숨김
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # 아이콘 파일이 있으면 'icon.ico' 경로 지정
+    icon=None,
     version=None,
     uac_admin=False,
     uac_uiaccess=False,
 )
-
-# =============================================================================
-# 빌드 방법
-# =============================================================================
-# 1. 필수 설치
-#    pip install pyinstaller
-#    pip install pyinstaller-hooks-contrib  # 추가 hooks
-#    pip install -r requirements.txt
-#
-# 1-1. (선택) QR 스캐너/엑셀 기능까지 번들하려면
-#    pip install -r requirements-optional.txt
-#
-# 2. (선택) UPX 설치 - 추가 압축
-#    https://github.com/upx/upx/releases 에서 다운로드
-#    upx.exe를 PATH에 추가하거나 프로젝트 폴더에 복사
-#
-# 3. 빌드 실행
-#    pyinstaller klottogenerator.spec
-#
-# 4. 결과물 위치
-#    dist/LottoGeneratorPro_v25.exe (단일 파일)
-#
-# =============================================================================
-# 예상 파일 크기
-# =============================================================================
-# - UPX 미사용: 약 40-50 MB
-# - UPX 사용:   약 20-30 MB
-#
-# =============================================================================

@@ -36,7 +36,7 @@ def _widget_styles(theme: Dict[str, str]) -> str:
 
 def _input_styles(theme: Dict[str, str]) -> str:
     return f"""
-        QLineEdit, QSpinBox {{
+        QLineEdit, QSpinBox, QComboBox, QTextEdit, QPlainTextEdit {{
             border: 1px solid {theme['border']};
             border-radius: 8px;
             padding: 4px 12px;
@@ -45,11 +45,11 @@ def _input_styles(theme: Dict[str, str]) -> str:
             font-size: 14px;
             selection-background-color: {theme['accent']};
         }}
-        QLineEdit:focus, QSpinBox:focus {{
+        QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus {{
             border: 2px solid {theme['accent']};
             background-color: {theme['bg_primary']};
         }}
-        QLineEdit:hover, QSpinBox:hover {{
+        QLineEdit:hover, QSpinBox:hover, QComboBox:hover, QTextEdit:hover, QPlainTextEdit:hover {{
             border-color: {theme['accent']};
         }}
         QSpinBox::up-button, QSpinBox::down-button {{
@@ -59,6 +59,10 @@ def _input_styles(theme: Dict[str, str]) -> str:
         }}
         QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
             background-color: {theme['accent']};
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            width: 24px;
         }}
     """
 
@@ -230,6 +234,50 @@ def _utility_styles(theme: Dict[str, str]) -> str:
             background-color: {theme['accent_light']};
             color: {theme['accent']};
         }}
+
+        QTableWidget, QTreeWidget {{
+            background-color: {theme['bg_secondary']};
+            alternate-background-color: {theme['result_row_alt']};
+            border: 1px solid {theme['border']};
+            border-radius: 8px;
+            gridline-color: {theme['border']};
+        }}
+        QHeaderView::section {{
+            background-color: {theme['bg_tertiary']};
+            color: {theme['text_primary']};
+            padding: 6px;
+            border: none;
+            border-bottom: 1px solid {theme['border']};
+        }}
+
+        QTabWidget::pane {{
+            border: 1px solid {theme['border']};
+            border-radius: 10px;
+            top: -1px;
+        }}
+        QTabBar::tab {{
+            background-color: {theme['bg_secondary']};
+            color: {theme['text_secondary']};
+            padding: 8px 14px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            margin-right: 4px;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {theme['accent']};
+            color: white;
+        }}
+
+        QProgressBar {{
+            border: 1px solid {theme['border']};
+            border-radius: 8px;
+            background-color: {theme['bg_tertiary']};
+            text-align: center;
+        }}
+        QProgressBar::chunk {{
+            background-color: {theme['accent']};
+            border-radius: 7px;
+        }}
     """
 
 
@@ -250,6 +298,17 @@ class ThemeManager:
     @classmethod
     def toggle_theme(cls):
         cls._current_theme = "dark" if cls._current_theme == "light" else "light"
+        logger.info("Theme changed to: %s", cls._current_theme)
+        for listener in list(cls._listeners):
+            listener()
+
+    @classmethod
+    def set_theme_name(cls, theme_name: str):
+        if theme_name not in THEMES:
+            return
+        if cls._current_theme == theme_name:
+            return
+        cls._current_theme = theme_name
         logger.info("Theme changed to: %s", cls._current_theme)
         for listener in list(cls._listeners):
             listener()

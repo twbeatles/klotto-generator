@@ -1,133 +1,30 @@
-import datetime
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple, Set
-from klotto.config import APP_CONFIG
-from klotto.data.store_utils import load_json_data, save_json_atomic
+﻿from __future__ import annotations
 
-# ============================================================
-# 즐겨찾기 관리
-# ============================================================
+from typing import Any, Dict, List, Optional
+
+from klotto.data.app_state import AppStateStore, get_shared_store
+
+
 class FavoritesManager:
-    """즐겨찾기 번호 관리"""
-    
-    def __init__(self):
-        favorites_file = APP_CONFIG.get('FAVORITES_FILE')
-        self.favorites_file: Optional[Path] = favorites_file if isinstance(favorites_file, Path) else None
-        self.favorites: List[Dict] = []
-        self._favorite_keys: Set[Tuple[int, ...]] = set()
-        self._load()
+    """Backward-compatible wrapper over the unified app-state store."""
 
-    @staticmethod
-    def _numbers_to_key(numbers: List[int], validate: bool = False) -> Optional[Tuple[int, ...]]:
-        try:
-            normalized = tuple(sorted(int(n) for n in numbers))
-        except (TypeError, ValueError):
-            return None
+    def __init__(self, store: Optional[AppStateStore] = None):
+        self.store = store or get_shared_store()
 
-        if not validate:
-            return normalized
+    def add(self, numbers: List[int], memo: str = '', save: bool = True) -> bool:
+        added = self.store.add_favorite(numbers, memo, save=False)
+        if added and save:
+            self.store.save()
+        return added
 
-        if len(normalized) != 6 or len(set(normalized)) != 6:
-            return None
-        if any(n < 1 or n > 45 for n in normalized):
-            return None
-        return normalized
+    def add_many(self, items: List[Dict[str, Any]]) -> int:
+        return self.store.add_favorites_many(items)
 
-    def _rebuild_index(self):
-        normalized_favorites: List[Dict] = []
-        self._favorite_keys.clear()
+    def remove(self, index: int) -> None:
+        self.store.remove_favorite(index)
 
-        for fav in self.favorites:
-            if not isinstance(fav, dict):
-                continue
+    def clear(self) -> None:
+        self.store.clear_favorites()
 
-            key = self._numbers_to_key(fav.get('numbers', []), validate=True)
-            if not key or key in self._favorite_keys:
-                continue
-
-            memo = fav.get('memo', '')
-            if not isinstance(memo, str):
-                memo = str(memo)
-
-            created_at = fav.get('created_at')
-            if not isinstance(created_at, str):
-                created_at = datetime.datetime.now().isoformat()
-
-            normalized_favorites.append({
-                'numbers': list(key),
-                'memo': memo,
-                'created_at': created_at
-            })
-            self._favorite_keys.add(key)
-
-        self.favorites = normalized_favorites
-    
-    def _load(self):
-        """파일에서 즐겨찾기 로드"""
-        favorites_file = self.favorites_file
-        if favorites_file is None:
-            self.favorites = []
-            self._rebuild_index()
-            return
-
-        loaded = load_json_data(favorites_file, "favorites", [])
-        self.favorites = loaded if isinstance(loaded, list) else []
-        self._rebuild_index()
-    
-    def _save(self):
-        """즐겨찾기를 파일에 저장 (Atomic)"""
-        save_json_atomic(self.favorites_file, self.favorites, "favorites")
-    
-    def add(self, numbers: List[int], memo: str = "", save: bool = True) -> bool:
-        """즐겨찾기 추가"""
-        key = self._numbers_to_key(numbers, validate=True)
-        if not key:
-            return False
-
-        if key in self._favorite_keys:
-            return False
-
-        if not isinstance(memo, str):
-            memo = str(memo)
-
-        self.favorites.append({
-            'numbers': list(key),
-            'memo': memo,
-            'created_at': datetime.datetime.now().isoformat()
-        })
-        self._favorite_keys.add(key)
-
-        if save:
-            self._save()
-        return True
-
-    def add_many(self, items: List[Dict]) -> int:
-        """여러 즐겨찾기 항목 추가 (단일 파일 저장)"""
-        added_count = 0
-        changed = False
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            numbers = item.get('numbers', [])
-            memo = item.get('memo', '')
-            if self.add(numbers, memo=memo, save=False):
-                added_count += 1
-                changed = True
-
-        if changed:
-            self._save()
-
-        return added_count
-    
-    def remove(self, index: int):
-        """즐겨찾기 삭제"""
-        if 0 <= index < len(self.favorites):
-            removed = self.favorites.pop(index)
-            key = self._numbers_to_key(removed.get('numbers', []))
-            if key:
-                self._favorite_keys.discard(key)
-            self._save()
-    
-    def get_all(self) -> List[Dict]:
-        return self.favorites.copy()
+    def get_all(self) -> List[Dict[str, Any]]:
+        return list(self.store.state['favorites'])

@@ -17,8 +17,12 @@ Thumbs.db
 .mypy_cache/
 .ruff_cache/
 .pyright/
+.tox/
+.nox/
+.cache/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 .hypothesis/
 .pyre/
@@ -28,7 +32,12 @@ htmlcov/
 *.log
 *.tmp
 *.bak
+*.orig
+*.rej
 lotto_history_*.xlsx
+data/*.db-shm
+data/*.db-wal
+data/*.db-journal
 
 # Packaging / local metadata
 *.egg-info/
