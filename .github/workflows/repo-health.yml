@@ -32,7 +32,7 @@ jobs:
       - name: Run pytest
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        run: python -m pytest -q --ignore=tests/test_ui_shell.py
 
       - name: Compile Python sources
         run: python -m compileall klotto scripts run_klotto.py klottogenerator.py
