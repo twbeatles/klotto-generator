@@ -5,7 +5,7 @@ import sys
 from importlib.util import find_spec
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 
 project_path = Path(SPECPATH)
 is_windows = sys.platform.startswith('win')
@@ -78,17 +78,23 @@ hidden_imports = [
     'qrcode',
     'PIL.ImageQt',
     'email',
+    'klotto.core.draws',
+    'klotto.core.sync_service',
     'klotto.core.backtest',
     'klotto.core.strategy_catalog',
     'klotto.core.strategy_engine',
     'klotto.core.strategy_filters',
     'klotto.data.app_state',
     'klotto.data.models',
+    'klotto.net.client',
+    'klotto.net.http',
     'klotto.ui.dialogs',
     'klotto.ui.main_window',
     'klotto.ui.scanner',
     'klotto.ui.widgets',
     'klotto.ui.widgets.strategy_editor',
+    'klotto.ui.widgets.winning_info',
+    'zoneinfo',
 ]
 
 
@@ -98,6 +104,7 @@ def has_module(name):
 
 optional_hidden_imports = []
 optional_binaries = []
+optional_datas = []
 
 if has_module('numpy'):
     optional_hidden_imports.append('numpy')
@@ -110,6 +117,10 @@ if has_module('pyzbar'):
     optional_hidden_imports.append('pyzbar.pyzbar')
     optional_binaries.extend(collect_dynamic_libs('pyzbar'))
 
+if has_module('tzdata'):
+    optional_hidden_imports.append('tzdata')
+    optional_datas.extend(collect_data_files('tzdata'))
+
 
 a = Analysis(
     [entry_script],
@@ -117,7 +128,7 @@ a = Analysis(
     binaries=optional_binaries,
     datas=[
         (str(project_path / 'data' / 'lotto_history.db'), 'data'),
-    ] if (project_path / 'data' / 'lotto_history.db').exists() else [],
+    ] + optional_datas if (project_path / 'data' / 'lotto_history.db').exists() else optional_datas,
     hiddenimports=hidden_imports + optional_hidden_imports,
     hookspath=[],
     hooksconfig={},

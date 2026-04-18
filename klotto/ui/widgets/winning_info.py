@@ -1,4 +1,6 @@
-from typing import Any, Dict, List, Optional, Tuple
+from __future__ import annotations
+
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
@@ -12,13 +14,18 @@ from klotto.ui.widgets.lotto_ball import LottoBall
 
 
 class WinningInfoWidget(QWidget):
-    """지난 회차 당첨 정보를 표시하는 위젯"""
-
     dataLoaded = pyqtSignal(dict)
 
-    def __init__(self, stats_manager: WinningStatsManager, parent=None):
+    def __init__(
+        self,
+        stats_manager: WinningStatsManager,
+        parent=None,
+        *,
+        proxy_url_getter: Optional[Callable[[], str]] = None,
+    ):
         super().__init__(parent)
         self.stats_manager = stats_manager
+        self._proxy_url_getter = proxy_url_getter or (lambda: "")
         self.network_manager = LottoNetworkManager(self)
         self.network_manager.dataLoaded.connect(self._on_data_received)
         self.network_manager.errorOccurred.connect(self._on_error)
@@ -38,27 +45,26 @@ class WinningInfoWidget(QWidget):
         header_layout = QHBoxLayout()
         header_layout.setSpacing(10)
 
-        self.toggle_btn = QPushButton("▼")
+        self.toggle_btn = QPushButton("▾")
         self.toggle_btn.setFixedSize(28, 28)
         self.toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_btn.clicked.connect(self._toggle_collapse)
         header_layout.addWidget(self.toggle_btn)
 
-        self.title_label = QLabel("지난 회차 당첨 정보")
+        self.title_label = QLabel("최신 당첨 정보")
         self.title_label.setStyleSheet(
             f"font-size: 16px; font-weight: bold; color: {ThemeManager.get_theme()['text_primary']};"
         )
         header_layout.addWidget(self.title_label)
-
         header_layout.addStretch()
 
         self.draw_spinbox = QSpinBox()
         self.draw_spinbox.setRange(1, self.current_draw_no)
         self.draw_spinbox.setValue(self.current_draw_no)
         self.draw_spinbox.setFixedWidth(110)
-        self.draw_spinbox.setSuffix(" 회")
+        self.draw_spinbox.setSuffix("회")
         self.draw_spinbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.draw_spinbox.setToolTip("조회할 회차를 선택하세요")
+        self.draw_spinbox.setToolTip("조회할 회차를 선택해 주세요.")
         self.draw_spinbox.setStyleSheet("font-size: 14px; padding: 2px 5px;")
         header_layout.addWidget(self.draw_spinbox)
 
@@ -144,7 +150,7 @@ class WinningInfoWidget(QWidget):
     def _toggle_collapse(self):
         self._is_collapsed = not self._is_collapsed
         self.content_widget.setVisible(not self._is_collapsed)
-        self.toggle_btn.setText("▶" if self._is_collapsed else "▼")
+        self.toggle_btn.setText("▸" if self._is_collapsed else "▾")
 
     def _on_refresh_clicked(self):
         self.load_winning_info(self.draw_spinbox.value())
@@ -188,7 +194,6 @@ class WinningInfoWidget(QWidget):
         plus_label = QLabel("+")
         plus_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {theme['text_muted']};")
         self.numbers_layout.addWidget(plus_label)
-
         self.numbers_layout.addWidget(LottoBall(bonus, size=34))
 
         bonus_label = QLabel("보너스")
@@ -201,17 +206,17 @@ class WinningInfoWidget(QWidget):
         total_sales = int(draw_data.get("total_sales", 0))
 
         if first_prize > 0 and first_winners > 0:
-            prize_text = f"🏆 <b style='color:{theme['danger']};'>1등</b> <b>{first_prize:,}원</b> ({first_winners}명)"
+            prize_text = f"1등 <b style='color:{theme['danger']};'>{first_prize:,}원</b> ({first_winners}명)"
         else:
-            prize_text = "🏆 1등 정보: <b>정보 없음</b>"
+            prize_text = "1등 정보: <b>정보 없음</b>"
         prize_info = QLabel(prize_text)
         prize_info.setStyleSheet("font-size: 14px;")
         self.prize_layout.addWidget(prize_info)
 
         if total_sales > 0:
-            sales_text = f"📊 판매액: <b>{total_sales:,}원</b>"
+            sales_text = f"총 판매액 <b>{total_sales:,}원</b>"
         else:
-            sales_text = "📊 판매액: <b>정보 없음</b>"
+            sales_text = "총 판매액 <b>정보 없음</b>"
         sales_info = QLabel(sales_text)
         sales_info.setStyleSheet(f"font-size: 13px; color: {theme['text_secondary']};")
         self.prize_layout.addWidget(sales_info)
@@ -232,12 +237,12 @@ class WinningInfoWidget(QWidget):
         cached = self.stats_manager.get_draw_data(draw_no)
         if cached:
             self._render_draw_data(cached)
-            self._set_status("DB 캐시 표시 중 · 최신 정보 확인 중", "accent")
+            self._set_status("DB 캐시를 표시 중이며 최신 정보를 확인하고 있습니다.", "accent")
         else:
             self._reset_view()
-            self._set_status("최신 정보 확인 중", "accent")
+            self._set_status("최신 정보를 확인하고 있습니다.", "accent")
 
-        self.network_manager.fetch_draw(draw_no)
+        self.network_manager.fetch_draw(draw_no, proxy_url=self._proxy_url_getter())
 
     def _on_data_received(self, data: dict):
         normalized = normalize_legacy_draw_payload(data)
@@ -274,7 +279,7 @@ class WinningInfoWidget(QWidget):
         self.refresh_btn.setEnabled(True)
 
         if self.current_data is not None:
-            self._set_status(f"네트워크 오류 · DB 캐시 표시 유지 중 ({error_msg})", "danger")
+            self._set_status(f"네트워크 오류로 캐시를 유지합니다. ({error_msg})", "danger")
             return
 
         self._reset_view()

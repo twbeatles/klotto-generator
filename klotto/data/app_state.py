@@ -7,10 +7,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from uuid import uuid4
 
 from klotto.config import APP_CONFIG
-from klotto.core.lotto_rules import calculate_rank, normalize_numbers, normalize_positive_int
+from klotto.core.lotto_rules import calculate_rank, normalize_numbers, normalize_positive_int, safe_int
 from klotto.core.strategy_catalog import create_default_strategy_request
 from klotto.data.store_utils import load_json_data, save_json_atomic
 from klotto.logging import logger
+from klotto.net.http import normalize_proxy_url
 
 
 class AppStateStore:
@@ -136,13 +137,13 @@ class AppStateStore:
             'backtest': self.normalize_strategy_request(incoming_prefs.get('backtest') or defaults['strategyPrefs']['backtest']),
         }
         state['strategyPresets'] = [preset for preset in (self.normalize_strategy_preset(item) for item in raw.get('strategyPresets', [])) if preset]
-        state['alertPrefs'] = {**defaults['alertPrefs'], **alert_prefs_raw}
+        state['alertPrefs'] = self.normalize_alert_prefs({**defaults['alertPrefs'], **alert_prefs_raw})
         state['syncMeta'] = {**defaults['syncMeta'], **sync_meta_raw}
         state['dataHealth'] = {**defaults['dataHealth'], **data_health_raw}
         state['theme'] = raw.get('theme') if raw.get('theme') in {'light', 'dark'} else defaults['theme']
         state['windowGeometry'] = raw.get('windowGeometry')
-        state['proxyUrl'] = str(raw.get('proxyUrl') or '')[:500]
-        state['generatorOptions'] = {**defaults['generatorOptions'], **generator_options_raw}
+        state['proxyUrl'] = normalize_proxy_url(raw.get('proxyUrl'))[:500]
+        state['generatorOptions'] = self.normalize_generator_options({**defaults['generatorOptions'], **generator_options_raw})
         return state
 
     def save(self) -> bool:
@@ -249,8 +250,53 @@ class AppStateStore:
         self.save()
 
     def normalize_ticket_quantity(self, value: Any) -> int:
-        quantity = max(1, int(value or 1))
+        quantity = max(1, safe_int(value, default=1))
         return quantity if quantity > 0 else 1
+
+    def normalize_generator_options(self, raw: Any) -> Dict[str, Any]:
+        options = raw if isinstance(raw, dict) else {}
+        num_sets = safe_int(options.get('num_sets'), default=int(self.create_default_state()['generatorOptions']['num_sets']))
+        consecutive_limit = safe_int(options.get('consecutive_limit'), default=int(self.create_default_state()['generatorOptions']['consecutive_limit']))
+        return {
+            'num_sets': max(1, min(int(APP_CONFIG['MAX_SETS']), num_sets)),
+            'fixed_nums': str(options.get('fixed_nums') or '')[:200],
+            'exclude_nums': str(options.get('exclude_nums') or '')[:200],
+            'check_consecutive': bool(options.get('check_consecutive', True)),
+            'consecutive_limit': max(0, min(5, consecutive_limit)),
+        }
+
+    def get_generator_options(self) -> Dict[str, Any]:
+        return self.normalize_generator_options(self.state.get('generatorOptions') or {})
+
+    def update_generator_options(self, **updates: Any) -> Dict[str, Any]:
+        self.state['generatorOptions'] = self.normalize_generator_options({**self.get_generator_options(), **updates})
+        self.save()
+        return dict(self.state['generatorOptions'])
+
+    def normalize_alert_prefs(self, raw: Any) -> Dict[str, bool]:
+        prefs = raw if isinstance(raw, dict) else {}
+        return {
+            'enableInApp': bool(prefs.get('enableInApp', True)),
+            'enableSystemNotification': bool(prefs.get('enableSystemNotification', False)),
+            'notifyOnNewResult': bool(prefs.get('notifyOnNewResult', True)),
+        }
+
+    def get_alert_prefs(self) -> Dict[str, bool]:
+        return self.normalize_alert_prefs(self.state.get('alertPrefs') or {})
+
+    def update_alert_prefs(self, **updates: Any) -> Dict[str, bool]:
+        self.state['alertPrefs'] = self.normalize_alert_prefs({**self.get_alert_prefs(), **updates})
+        self.save()
+        return dict(self.state['alertPrefs'])
+
+    def set_proxy_url(self, value: Any) -> str:
+        normalized = normalize_proxy_url(value)[:500]
+        self.state['proxyUrl'] = normalized
+        self.save()
+        return normalized
+
+    def get_strategy_presets(self, scope: str) -> List[Dict[str, Any]]:
+        return [dict(item) for item in self.state['strategyPresets'] if item.get('scope') == scope]
 
     def get_ticket_quantity(self, ticket: Dict[str, Any]) -> int:
         return self.normalize_ticket_quantity(ticket.get('quantity'))
@@ -303,7 +349,7 @@ class AppStateStore:
         normalized_checked = None
         if checked:
             checked_draw = normalize_positive_int(checked.get('drawNo'))
-            checked_rank = int(checked.get('rank') or 0)
+            checked_rank = max(0, min(5, safe_int(checked.get('rank'), default=0)))
             if checked_draw is not None and 0 <= checked_rank <= 5:
                 normalized_checked = {
                     'drawNo': checked_draw,

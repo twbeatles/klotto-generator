@@ -1,29 +1,46 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from klotto.core.strategy_catalog import create_default_strategy_request, list_strategies
+from klotto.data.app_state import AppStateStore
 
 
 class StrategyRequestEditor(QGroupBox):
-    def __init__(self, scope: str, title: str = '전략 설정', parent: Optional[QWidget] = None):
+    strategiesChanged = pyqtSignal()
+    presetApplied = pyqtSignal(dict)
+
+    def __init__(
+        self,
+        scope: str,
+        title: str = '전략 설정',
+        parent: Optional[QWidget] = None,
+        *,
+        store: Optional[AppStateStore] = None,
+    ):
         super().__init__(title, parent)
         self.scope = scope
+        self.store = store
         self._setup_ui()
         self.reload_strategies()
+        self.reload_presets()
         self.apply_request(create_default_strategy_request('ensemble_weighted'))
 
     def _setup_ui(self):
@@ -34,6 +51,22 @@ class StrategyRequestEditor(QGroupBox):
         header.addWidget(self.experimental_chk)
         header.addStretch()
         layout.addLayout(header)
+
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel('프리셋'))
+        self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumWidth(180)
+        preset_row.addWidget(self.preset_combo, 1)
+        self.load_preset_btn = QPushButton('불러오기')
+        self.load_preset_btn.clicked.connect(self.load_selected_preset)
+        preset_row.addWidget(self.load_preset_btn)
+        self.save_preset_btn = QPushButton('저장')
+        self.save_preset_btn.clicked.connect(self.save_current_preset)
+        preset_row.addWidget(self.save_preset_btn)
+        self.delete_preset_btn = QPushButton('삭제')
+        self.delete_preset_btn.clicked.connect(self.delete_selected_preset)
+        preset_row.addWidget(self.delete_preset_btn)
+        layout.addLayout(preset_row)
 
         form = QFormLayout()
         self.strategy_combo = QComboBox()
@@ -123,12 +156,39 @@ class StrategyRequestEditor(QGroupBox):
         index = max(0, self.strategy_combo.findData(current))
         self.strategy_combo.setCurrentIndex(index)
         self.strategy_combo.blockSignals(False)
+        self.strategiesChanged.emit()
+
+    def reload_presets(self):
+        current = self.preset_combo.currentData()
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        self.preset_combo.addItem('프리셋 선택', '')
+        presets = self.store.get_strategy_presets(self.scope) if self.store else []
+        for preset in presets:
+            self.preset_combo.addItem(str(preset.get('name') or '이름 없는 프리셋'), str(preset.get('id') or ''))
+        index = self.preset_combo.findData(current)
+        self.preset_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.preset_combo.blockSignals(False)
+        enabled = bool(self.store)
+        self.load_preset_btn.setEnabled(enabled)
+        self.save_preset_btn.setEnabled(enabled)
+        self.delete_preset_btn.setEnabled(enabled and bool(self._get_selected_preset()))
+
+    def _get_selected_preset(self) -> Optional[Dict[str, Any]]:
+        if not self.store:
+            return None
+        preset_id = str(self.preset_combo.currentData() or '').strip()
+        if not preset_id:
+            return None
+        for preset in self.store.get_strategy_presets(self.scope):
+            if str(preset.get('id') or '') == preset_id:
+                return preset
+        return None
 
     def _read_pair(self, left: QSpinBox, right: QSpinBox) -> Optional[list[int]]:
         if left.value() < 0 or right.value() < 0:
             return None
-        values = sorted([left.value(), right.value()])
-        return values
+        return sorted([left.value(), right.value()])
 
     def build_request(self) -> Dict[str, Any]:
         seed_text = self.seed_edit.text().strip()
@@ -179,6 +239,42 @@ class StrategyRequestEditor(QGroupBox):
         if isinstance(values, (list, tuple)) and len(values) >= 2:
             left.setValue(int(values[0]))
             right.setValue(int(values[1]))
-        else:
-            left.setValue(-1)
-            right.setValue(-1)
+            return
+        left.setValue(-1)
+        right.setValue(-1)
+
+    def save_current_preset(self):
+        if not self.store:
+            return
+        name, ok = QInputDialog.getText(self, '전략 프리셋 저장', '프리셋 이름')
+        cleaned = name.strip()
+        if not ok or not cleaned:
+            return
+        preset = self.store.save_strategy_preset(self.scope, cleaned, self.build_request())
+        if not preset:
+            QMessageBox.warning(self, '프리셋 저장', '프리셋을 저장할 수 없습니다.')
+            return
+        self.reload_presets()
+        index = self.preset_combo.findData(str(preset.get('id') or ''))
+        self.preset_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.delete_preset_btn.setEnabled(True)
+
+    def load_selected_preset(self):
+        preset = self._get_selected_preset()
+        if not preset:
+            return
+        self.apply_request(preset.get('request') or {})
+        self.delete_preset_btn.setEnabled(True)
+        self.presetApplied.emit(dict(preset))
+
+    def delete_selected_preset(self):
+        if not self.store:
+            return
+        preset = self._get_selected_preset()
+        if not preset:
+            return
+        result = QMessageBox.question(self, '프리셋 삭제', f"'{preset.get('name')}' 프리셋을 삭제할까요?")
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        if self.store.delete_strategy_preset(str(preset.get('id') or '')):
+            self.reload_presets()

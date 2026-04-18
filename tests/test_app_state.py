@@ -206,3 +206,46 @@ def test_import_backup_restores_sync_meta_and_prunes_orphans(configured_paths: d
     assert len(store.state['campaigns']) == 1
     assert store.state['campaigns'][0]['id'] == 'campaign-linked'
     assert store.state['ticketBook'][0]['checked']['rank'] == 1
+
+
+def test_load_state_recovers_from_malformed_ticket_fields(configured_paths: dict[str, Path]):
+    _write_json(
+        configured_paths['app_state'],
+        {
+            'ticketBook': [
+                {
+                    'numbers': [1, 2, 3, 4, 5, 6],
+                    'targetDrawNo': 121,
+                    'source': 'generator',
+                    'quantity': 'oops',
+                    'checked': {
+                        'drawNo': 121,
+                        'rank': '9',
+                    },
+                },
+                {
+                    'numbers': [7, 8, 9, 10, 11, 12],
+                    'targetDrawNo': 122,
+                    'source': 'ai',
+                    'quantity': -5,
+                    'checked': {
+                        'drawNo': 'bad',
+                        'rank': 'NaN',
+                    },
+                },
+                None,
+                'broken',
+            ],
+            'proxyUrl': 'socks5://localhost:9999',
+        },
+    )
+
+    store = AppStateStore(configured_paths['app_state'])
+
+    assert len(store.state['ticketBook']) == 2
+    first, second = store.state['ticketBook']
+    assert first['quantity'] == 1
+    assert first['checked']['rank'] == 5
+    assert second['quantity'] == 1
+    assert second['checked'] is None
+    assert store.state['proxyUrl'] == ''

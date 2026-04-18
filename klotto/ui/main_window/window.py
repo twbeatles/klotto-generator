@@ -8,6 +8,7 @@ from PyQt6.QtGui import QCloseEvent, QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -34,7 +36,7 @@ from PyQt6.QtWidgets import (
 
 from klotto.config import APP_CONFIG
 from klotto.core.backtest import run_backtest
-from klotto.core.draws import estimate_latest_draw
+from klotto.core.draws import estimate_latest_draw, split_missing_draws
 from klotto.core.lotto_rules import parse_number_expression
 from klotto.core.stats import WinningStatsManager
 from klotto.core.sync_service import LottoSyncWorker
@@ -44,6 +46,7 @@ from klotto.data.exporter import DataExporter
 from klotto.data.favorites import FavoritesManager
 from klotto.data.history import HistoryManager
 from klotto.logging import logger
+from klotto.net.http import normalize_proxy_url
 from klotto.ui.dialogs import ExportImportDialog
 from klotto.ui.theme import ThemeManager
 from klotto.ui.widgets import StrategyRequestEditor, WinningInfoWidget
@@ -74,13 +77,17 @@ class NumberGenerationPage(QWidget):
         self.enable_campaign = enable_campaign
         self.generated_rows: List[Dict[str, Any]] = []
         self._task: Optional[TaskThread] = None
+        self._is_hydrating = False
         self._setup_ui(title)
-        self.refresh_defaults()
+        self.hydrate_defaults()
 
     def _setup_ui(self, title: str):
         layout = QVBoxLayout(self)
         if self.scope == 'generator':
-            self.winning_info_widget = WinningInfoWidget(self.app_window.stats_manager)
+            self.winning_info_widget = WinningInfoWidget(
+                self.app_window.stats_manager,
+                proxy_url_getter=lambda: str(self.app_window.store.state.get('proxyUrl') or ''),
+            )
             self.winning_info_widget.dataLoaded.connect(lambda _payload: self.app_window.refresh_all_views())
             layout.addWidget(self.winning_info_widget)
 
@@ -89,7 +96,8 @@ class NumberGenerationPage(QWidget):
         layout.addWidget(header)
 
         top = QHBoxLayout()
-        self.strategy_editor = StrategyRequestEditor(self.scope, '전략 / 필터')
+        self.strategy_editor = StrategyRequestEditor(self.scope, '전략 / 필터', store=self.app_window.store)
+        self.strategy_editor.presetApplied.connect(self._on_preset_applied)
         top.addWidget(self.strategy_editor, 2)
 
         side = QGroupBox('실행 옵션')
@@ -163,14 +171,52 @@ class NumberGenerationPage(QWidget):
         actions.addStretch()
         layout.addLayout(actions)
 
-    def refresh_defaults(self):
-        pref = self.app_window.store.get_strategy_pref(self.scope)
-        self.strategy_editor.apply_request(pref)
-        next_draw = self.app_window.get_next_target_draw()
-        self.target_draw_spin.setValue(next_draw)
-        if self.enable_campaign:
-            self.campaign_start_spin.setValue(next_draw)
+        if self.scope == 'generator':
+            self.set_count_spin.valueChanged.connect(self._persist_generator_options)
+            self.fixed_input.textChanged.connect(self._persist_generator_options)
+            self.exclude_input.textChanged.connect(self._persist_generator_options)
+
+    def hydrate_defaults(self):
+        self._is_hydrating = True
+        try:
+            pref = self.app_window.store.get_strategy_pref(self.scope)
+            self.strategy_editor.apply_request(pref)
+            next_draw = self.app_window.get_next_target_draw()
+            self.target_draw_spin.setValue(next_draw)
+            if self.enable_campaign:
+                self.campaign_start_spin.setValue(next_draw)
+            if self.scope == 'generator':
+                options = self.app_window.store.get_generator_options()
+                self.set_count_spin.setValue(int(options.get('num_sets') or 5))
+                self.fixed_input.setPlainText(str(options.get('fixed_nums') or ''))
+                self.exclude_input.setPlainText(str(options.get('exclude_nums') or ''))
+        finally:
+            self._is_hydrating = False
+        self._persist_generator_options()
         self.update_data_gate()
+
+    def refresh_defaults(self):
+        self.hydrate_defaults()
+
+    def refresh_view_state(self):
+        self.update_data_gate()
+
+    def _persist_generator_options(self):
+        if self.scope != 'generator' or self._is_hydrating:
+            return
+        request = self.strategy_editor.build_request()
+        max_consecutive_pairs = request.get('filters', {}).get('maxConsecutivePairs')
+        self.app_window.store.update_generator_options(
+            num_sets=self.set_count_spin.value(),
+            fixed_nums=self.fixed_input.toPlainText().strip(),
+            exclude_nums=self.exclude_input.toPlainText().strip(),
+            check_consecutive=max_consecutive_pairs is not None,
+            consecutive_limit=0 if max_consecutive_pairs is None else int(max_consecutive_pairs),
+        )
+
+    def _on_preset_applied(self, _preset: Dict[str, Any]):
+        self.app_window.store.set_strategy_pref(self.scope, self.strategy_editor.build_request())
+        self._persist_generator_options()
 
     def update_data_gate(self):
         health = self.app_window.store.state.get('dataHealth') or {}
@@ -195,11 +241,13 @@ class NumberGenerationPage(QWidget):
     def _build_request(self) -> Dict[str, Any]:
         request = self.strategy_editor.build_request()
         self.app_window.store.set_strategy_pref(self.scope, request)
+        self._persist_generator_options()
         return request
 
     def run_generation(self):
         if self.scope == 'ai' and not self.app_window.can_use_advanced_features(show_message=True):
             return
+        self._persist_generator_options()
         fixed, exclude = self._parse_fixed_exclude()
         request = self._build_request()
         count = self.set_count_spin.value()
@@ -226,6 +274,7 @@ class NumberGenerationPage(QWidget):
             return
         if self.scope == 'ai' and not self.app_window.can_use_advanced_features(show_message=True):
             return
+        self._persist_generator_options()
         fixed, exclude = self._parse_fixed_exclude()
         request = self._build_request()
         start_draw = self.campaign_start_spin.value()
@@ -419,7 +468,9 @@ class BacktestPage(QWidget):
         self._task: Optional[TaskThread] = None
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.strategy_editor = StrategyRequestEditor('backtest', '전략 기준값')
+        self.strategy_editor = StrategyRequestEditor('backtest', '전략 기준값', store=self.app_window.store)
+        self.strategy_editor.strategiesChanged.connect(lambda: self._populate_strategy_list(self._selected_strategy_ids()))
+        self.strategy_editor.presetApplied.connect(self._on_preset_applied)
         top.addWidget(self.strategy_editor, 2)
 
         side = QGroupBox('백테스트 실행')
@@ -446,26 +497,54 @@ class BacktestPage(QWidget):
         self.result_table = QTableWidget(0, 7)
         self.result_table.setHorizontalHeaderLabels(['전략', 'ROI', '적중률', '회차', '티켓', '총상금', '총비용'])
         layout.addWidget(self.result_table, 1)
-        self.refresh_defaults()
+        self.hydrate_defaults()
 
-    def refresh_defaults(self):
+    def hydrate_defaults(self):
         pref = self.app_window.store.get_strategy_pref('backtest')
         self.strategy_editor.apply_request(pref)
         latest = self.app_window.get_latest_draw_no()
         self.start_draw_spin.setValue(max(1, latest - 30))
         self.end_draw_spin.setValue(latest)
+        selected_strategy = str(pref.get('strategyId') or self.strategy_editor.strategy_combo.currentData() or '')
+        self._populate_strategy_list({selected_strategy} if selected_strategy else set())
+        self.update_data_gate()
+
+    def refresh_defaults(self):
+        self.hydrate_defaults()
+
+    def refresh_view_state(self):
+        self._populate_strategy_list(self._selected_strategy_ids())
+        self.update_data_gate()
+
+    def _selected_strategy_ids(self) -> set[str]:
+        selected: set[str] = set()
+        for item in self.strategy_list.selectedItems():
+            strategy_id = str(item.data(Qt.ItemDataRole.UserRole) or '').strip()
+            if strategy_id:
+                selected.add(strategy_id)
+        return selected
+
+    def _populate_strategy_list(self, selected_ids: Optional[set[str]] = None):
+        preserved = selected_ids if selected_ids is not None else self._selected_strategy_ids()
         self.strategy_list.clear()
-        for meta in self.strategy_editor.strategy_combo.model().stringList() if False else []:
-            pass
         for index in range(self.strategy_editor.strategy_combo.count()):
-            item = QListWidgetItem(self.strategy_editor.strategy_combo.itemText(index))
-            item.setData(Qt.ItemDataRole.UserRole, self.strategy_editor.strategy_combo.itemData(index))
+            label = self.strategy_editor.strategy_combo.itemText(index)
+            strategy_id = str(self.strategy_editor.strategy_combo.itemData(index) or '')
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, strategy_id)
             self.strategy_list.addItem(item)
-        if self.strategy_list.count() > 0:
+            if strategy_id and strategy_id in preserved:
+                item.setSelected(True)
+        if not self.strategy_list.selectedItems() and self.strategy_list.count() > 0:
             first_item = self.strategy_list.item(0)
             if first_item is not None:
                 first_item.setSelected(True)
-        self.update_data_gate()
+
+    def _on_preset_applied(self, _preset: Dict[str, Any]):
+        request = self.strategy_editor.build_request()
+        self.app_window.store.set_strategy_pref('backtest', request)
+        selected_strategy = str(request.get('strategyId') or '')
+        self._populate_strategy_list({selected_strategy} if selected_strategy else self._selected_strategy_ids())
 
     def update_data_gate(self):
         allowed = self.app_window.is_data_health_full()
@@ -712,9 +791,9 @@ class DataPage(QWidget):
         if not isinstance(payload, dict):
             QMessageBox.warning(self, '가져오기', '백업 파일 형식이 올바르지 않습니다.')
             return
-        self.app_window.store.import_backup_payload(payload, winning_data=self.app_window.stats_manager.winning_data)
+        self.app_window.store.import_backup_payload(payload, mode='merge', winning_data=self.app_window.stats_manager.winning_data)
         self.app_window.refresh_all_views()
-        self.app_window.show_status('백업을 불러왔습니다.', 4000)
+        self.app_window.show_status('백업을 merge 방식으로 불러왔습니다.', 4000)
 
     def open_legacy_dialog(self):
         dialog = ExportImportDialog(self.app_window.favorites_manager, self.app_window.history_manager, self.app_window.stats_manager, self)
@@ -724,18 +803,54 @@ class DataPage(QWidget):
 
 class SettingsPage(QWidget):
     syncRequested = pyqtSignal()
+    fullRepairRequested = pyqtSignal()
 
     def __init__(self, app_window: 'LottoApp'):
         super().__init__(app_window)
         self.app_window = app_window
+        self._is_refreshing = False
         layout = QVBoxLayout(self)
+
         self.health_label = QLabel()
+        self.health_label.setWordWrap(True)
         self.sync_label = QLabel()
+        self.sync_label.setWordWrap(True)
         layout.addWidget(self.health_label)
         layout.addWidget(self.sync_label)
+
+        proxy_group = QGroupBox('네트워크')
+        proxy_layout = QHBoxLayout(proxy_group)
+        self.proxy_input = QLineEdit()
+        self.proxy_input.setPlaceholderText('http://127.0.0.1:8080 또는 비워두기')
+        proxy_layout.addWidget(self.proxy_input, 1)
+        self.proxy_save_btn = QPushButton('프록시 저장')
+        self.proxy_save_btn.clicked.connect(self._save_proxy)
+        proxy_layout.addWidget(self.proxy_save_btn)
+        layout.addWidget(proxy_group)
+
+        alert_group = QGroupBox('알림 설정')
+        alert_layout = QVBoxLayout(alert_group)
+        self.enable_in_app_chk = QCheckBox('인앱 알림 사용')
+        self.enable_in_app_chk.toggled.connect(self._save_alert_prefs)
+        alert_layout.addWidget(self.enable_in_app_chk)
+        self.notify_new_result_chk = QCheckBox('새 최신 회차 반영 시 알림')
+        self.notify_new_result_chk.toggled.connect(self._save_alert_prefs)
+        alert_layout.addWidget(self.notify_new_result_chk)
+        self.system_notification_chk = QCheckBox('시스템 알림 사용 (미지원)')
+        self.system_notification_chk.setEnabled(False)
+        alert_layout.addWidget(self.system_notification_chk)
+        layout.addWidget(alert_group)
+
+        sync_actions = QHBoxLayout()
         self.sync_btn = QPushButton('지금 동기화')
         self.sync_btn.clicked.connect(self.syncRequested.emit)
-        layout.addWidget(self.sync_btn)
+        sync_actions.addWidget(self.sync_btn)
+        self.full_repair_btn = QPushButton('전체 무결성 검사/복구')
+        self.full_repair_btn.clicked.connect(self.fullRepairRequested.emit)
+        sync_actions.addWidget(self.full_repair_btn)
+        sync_actions.addStretch()
+        layout.addLayout(sync_actions)
+
         self.theme_btn = QPushButton('라이트/다크 전환')
         self.theme_btn.clicked.connect(self.app_window.toggle_theme)
         layout.addWidget(self.theme_btn)
@@ -744,13 +859,46 @@ class SettingsPage(QWidget):
         layout.addWidget(self.log, 1)
 
     def refresh_status(self):
+        self._is_refreshing = True
         health = self.app_window.store.state['dataHealth']
         sync_meta = self.app_window.store.state['syncMeta']
-        self.health_label.setText(f"데이터 상태: {health.get('availability')} | 최신 회차 {health.get('latestDrawNo')} | {health.get('message') or health.get('source')}")
-        self.sync_label.setText(f"동기화 모드: {sync_meta.get('mode')} | 마지막 성공: {sync_meta.get('lastSuccessAt')} | 마지막 반영 회차: {sync_meta.get('lastSuccessDrawNo')}")
+        alert_prefs = self.app_window.store.get_alert_prefs()
+        self.health_label.setText(
+            f"데이터 상태: {health.get('availability')} | 최신 회차 {health.get('latestDrawNo')} | {health.get('message') or health.get('source')}"
+        )
+        self.sync_label.setText(
+            "\n".join(
+                [
+                    f"동기화 모드: {sync_meta.get('mode') or '-'} | 소스: {sync_meta.get('currentSource') or '-'}",
+                    f"마지막 성공: {sync_meta.get('lastSuccessAt') or '-'} ({sync_meta.get('lastSuccessDrawNo') or 0}회)",
+                    f"마지막 경고: {sync_meta.get('lastWarningAt') or '-'} | {sync_meta.get('lastWarningMessage') or '-'}",
+                    f"마지막 실패: {sync_meta.get('lastFailureAt') or '-'} | {sync_meta.get('lastFailureMessage') or '-'}",
+                ]
+            )
+        )
+        self.proxy_input.setText(str(self.app_window.store.state.get('proxyUrl') or ''))
+        self.enable_in_app_chk.setChecked(bool(alert_prefs.get('enableInApp')))
+        self.notify_new_result_chk.setChecked(bool(alert_prefs.get('notifyOnNewResult')))
+        self.system_notification_chk.setChecked(bool(alert_prefs.get('enableSystemNotification')))
+        self._is_refreshing = False
 
     def append_log(self, message: str):
         self.log.append(message)
+
+    def set_sync_in_progress(self, busy: bool):
+        self.sync_btn.setEnabled(not busy)
+        self.full_repair_btn.setEnabled(not busy)
+
+    def _save_proxy(self):
+        self.app_window.save_proxy_url(self.proxy_input.text())
+
+    def _save_alert_prefs(self):
+        if self._is_refreshing:
+            return
+        self.app_window.update_alert_preferences(
+            enable_in_app=self.enable_in_app_chk.isChecked(),
+            notify_on_new_result=self.notify_new_result_chk.isChecked(),
+        )
 
 class LottoApp(QMainWindow):
     def __init__(self):
@@ -760,6 +908,7 @@ class LottoApp(QMainWindow):
         self.history_manager = HistoryManager(self.store)
         self.stats_manager = WinningStatsManager()
         self._active_sync_worker: Optional[LottoSyncWorker] = None
+        self._sync_start_latest_draw = 0
         ThemeManager.set_theme_name(self.store.state.get('theme', 'light'))
         ThemeManager.add_listener(self.apply_theme)
         self._setup_ui()
@@ -800,7 +949,8 @@ class LottoApp(QMainWindow):
         self.check_page = CheckPage(self)
         self.data_page = DataPage(self)
         self.settings_page = SettingsPage(self)
-        self.settings_page.syncRequested.connect(self.start_sync)
+        self.settings_page.syncRequested.connect(lambda: self.start_sync('standard'))
+        self.settings_page.fullRepairRequested.connect(lambda: self.start_sync('full_repair'))
 
         for page in [self.generator_page, self.stats_page, self.ai_page, self.backtest_page, self.check_page, self.data_page, self.settings_page]:
             self.stack.addWidget(page)
@@ -855,28 +1005,42 @@ class LottoApp(QMainWindow):
     def refresh_data_health(self):
         winning_data = self.stats_manager.winning_data
         if not winning_data:
-            self.store.state['dataHealth'] = {'availability': 'none', 'source': 'none', 'latestDrawNo': 0, 'message': '당첨 데이터가 없습니다.'}
+            self.store.state['dataHealth'] = {
+                'availability': 'none',
+                'source': 'none',
+                'latestDrawNo': 0,
+                'message': '당첨 데이터가 없습니다.',
+            }
             self.store.save()
             return
         latest_draw = max(int(draw.get('draw_no', 0)) for draw in winning_data)
         existing = {int(draw.get('draw_no', 0)) for draw in winning_data}
-        allowed_missing = set(APP_CONFIG['ALLOWED_MISSING_DRAWS'])
-        missing = [draw_no for draw_no in range(1, latest_draw + 1) if draw_no not in existing and draw_no not in allowed_missing]
         expected_latest = estimate_latest_draw()
-        is_full = latest_draw >= (expected_latest - int(APP_CONFIG['LATEST_DRAW_STALE_THRESHOLD'])) and len(missing) == 0
+        stale_threshold = int(APP_CONFIG['LATEST_DRAW_STALE_THRESHOLD'])
+        health_reference_draw = max(latest_draw, expected_latest - stale_threshold)
+        missing = split_missing_draws(
+            existing,
+            health_reference_draw,
+            current_draw=expected_latest,
+            recent_window=int(APP_CONFIG['SYNC_RECENT_WINDOW']),
+            allowed_missing=APP_CONFIG['ALLOWED_MISSING_DRAWS'],
+        )
+        is_full = latest_draw >= (expected_latest - stale_threshold) and not missing['all']
         availability = 'full' if is_full else 'partial'
-        message = '전체 당첨 이력 확보' if is_full else f'누락 {len(missing)}회 / 예상 최신 {expected_latest}회'
+        message = (
+            '전체 당첨 이력 확보'
+            if is_full
+            else f"최근 누락 {len(missing['recent'])}건 / 과거 누락 {len(missing['historical'])}건 / 예상 최신 {expected_latest}회"
+        )
         self.store.state['dataHealth'] = {'availability': availability, 'source': 'sqlite_db', 'latestDrawNo': latest_draw, 'message': message}
         self.store.save()
 
     def refresh_all_views(self):
         self.refresh_data_health()
         self.stats_page.refresh_data()
-        self.generator_page.refresh_defaults()
-        self.ai_page.refresh_defaults()
-        self.backtest_page.refresh_defaults()
-        self.ai_page.update_data_gate()
-        self.backtest_page.update_data_gate()
+        self.generator_page.refresh_view_state()
+        self.ai_page.refresh_view_state()
+        self.backtest_page.refresh_view_state()
         self.check_page.refresh_sources()
         self.data_page.refresh_tables()
         self.settings_page.refresh_status()
@@ -913,20 +1077,34 @@ class LottoApp(QMainWindow):
             'note': ', '.join(str(value) for value in target_draw.get('numbers', [])),
         }]
 
-    def start_sync(self):
+    def start_sync(self, mode: str = 'standard'):
         if self._active_sync_worker and self._active_sync_worker.isRunning():
             return
-        worker = LottoSyncWorker(APP_CONFIG['LOTTO_HISTORY_DB'], recent_window=APP_CONFIG['SYNC_RECENT_WINDOW'])
+        normalized_mode = 'full_repair' if mode == 'full_repair' else 'standard'
+        self._sync_start_latest_draw = self.get_latest_draw_no()
+        worker = LottoSyncWorker(
+            APP_CONFIG['LOTTO_HISTORY_DB'],
+            recent_window=int(APP_CONFIG['SYNC_RECENT_WINDOW']),
+            proxy_url=str(self.store.state.get('proxyUrl') or ''),
+            mode=normalized_mode,
+            historical_batch_size=int(APP_CONFIG['HISTORICAL_SYNC_BATCH_SIZE']),
+        )
         self._active_sync_worker = worker
-        self.settings_page.append_log('동기화를 시작했습니다.')
+        self.settings_page.set_sync_in_progress(True)
+        self.settings_page.append_log('전체 무결성 검사/복구를 시작했습니다.' if normalized_mode == 'full_repair' else '표준 동기화를 시작했습니다.')
         worker.finished.connect(self._on_sync_finished)
         worker.error.connect(self._on_sync_error)
         worker.start()
 
     def _on_sync_finished(self, summary: Dict[str, Any]):
+        self._active_sync_worker = None
+        self.settings_page.set_sync_in_progress(False)
         fetched_records = summary.get('fetched_records', [])
         failed_draws = summary.get('failed_draws', [])
-        inserted = updated = unchanged = 0
+        cancelled = bool(summary.get('cancelled'))
+        mode = 'full_repair' if summary.get('mode') == 'full_repair' else 'standard'
+        inserted = updated = unchanged = invalid = 0
+        inserted_draws: List[int] = []
         for record in fetched_records:
             status = self.stats_manager.upsert_winning_data(
                 record['draw_no'],
@@ -939,36 +1117,116 @@ class LottoApp(QMainWindow):
             )
             if status == 'inserted':
                 inserted += 1
+                inserted_draws.append(int(record['draw_no']))
             elif status == 'updated':
                 updated += 1
             elif status == 'unchanged':
                 unchanged += 1
+            else:
+                invalid += 1
+
+        settled = self.store.settle_tickets_if_possible(self.store.state['ticketBook'], self.stats_manager.winning_data)
+        applied_count = inserted + updated + unchanged
+        if cancelled:
+            final_status = 'cancelled'
+        elif failed_draws and applied_count > 0:
+            final_status = 'warning'
+        elif failed_draws and applied_count == 0:
+            final_status = 'failure'
+        elif invalid and applied_count == 0:
+            final_status = 'failure'
+        else:
+            final_status = 'success'
+
         now = dt.datetime.now().isoformat()
         latest = self.get_latest_draw_no()
-        self.store.state['syncMeta'] = {
-            **self.store.state['syncMeta'],
-            'mode': 'automatic_fallback',
-            'currentSource': '기본 자동 동기화',
-            'lastSuccessAt': now,
-            'lastSuccessDrawNo': latest,
-            'lastFailureAt': now if failed_draws else self.store.state['syncMeta'].get('lastFailureAt', ''),
-            'lastFailureMessage': ', '.join(str(item) for item in failed_draws[:5]) if failed_draws else '',
-        }
+        sync_meta = dict(self.store.state['syncMeta'])
+        sync_meta['mode'] = mode
+        sync_meta['currentSource'] = '전체 무결성 검사/복구' if mode == 'full_repair' else '표준 동기화'
+        failure_message = ', '.join(str(item) for item in failed_draws[:10])
+        summary_message = (
+            f"status={final_status}, inserted={inserted}, updated={updated}, unchanged={unchanged}, invalid={invalid}, "
+            f"failed={len(failed_draws)}, settled={settled}, recentMissing={summary.get('recentMissingCount', 0)}, "
+            f"historicalMissing={summary.get('historicalMissingCount', 0)}"
+        )
+        if final_status == 'success':
+            sync_meta['lastSuccessAt'] = now
+            sync_meta['lastSuccessDrawNo'] = latest
+        elif final_status == 'warning':
+            sync_meta['lastWarningAt'] = now
+            sync_meta['lastWarningMessage'] = failure_message or summary_message
+        elif final_status == 'failure':
+            sync_meta['lastFailureAt'] = now
+            sync_meta['lastFailureMessage'] = failure_message or summary_message
+        else:
+            sync_meta['lastWarningAt'] = now
+            sync_meta['lastWarningMessage'] = '동기화가 취소되었습니다.'
+        self.store.state['syncMeta'] = sync_meta
+        summary['settledTickets'] = settled
+        summary['status'] = final_status
         self.store.save()
         self.refresh_all_views()
-        self.settings_page.append_log(f'동기화 완료: inserted={inserted}, updated={updated}, unchanged={unchanged}, failed={len(failed_draws)}')
-        self.show_status('당첨 데이터 동기화 완료', 4000)
+        self.settings_page.append_log(summary_message)
+
+        alert_prefs = self.store.get_alert_prefs()
+        if inserted_draws and max(inserted_draws) > self._sync_start_latest_draw and alert_prefs.get('enableInApp') and alert_prefs.get('notifyOnNewResult'):
+            latest_inserted = max(inserted_draws)
+            notice = f'새 최신 회차 {latest_inserted}회 결과를 반영했습니다.'
+            self.settings_page.append_log(notice)
+            self.show_status(notice, 5000)
+
+        status_message = {
+            'success': '당첨 데이터 동기화 완료',
+            'warning': '당첨 데이터 동기화 완료 (부분 실패)',
+            'failure': '당첨 데이터 동기화 실패',
+            'cancelled': '당첨 데이터 동기화 취소',
+        }[final_status]
+        self.show_status(status_message, 4000)
 
     def _on_sync_error(self, message: str):
+        mode = 'standard'
+        if self._active_sync_worker is not None:
+            mode = 'full_repair' if self._active_sync_worker.mode == 'full_repair' else 'standard'
+        self._active_sync_worker = None
+        self.settings_page.set_sync_in_progress(False)
         now = dt.datetime.now().isoformat()
         self.store.state['syncMeta'] = {
             **self.store.state['syncMeta'],
+            'mode': mode,
+            'currentSource': '전체 무결성 검사/복구' if mode == 'full_repair' else '표준 동기화',
             'lastFailureAt': now,
             'lastFailureMessage': message,
         }
         self.store.save()
         self.settings_page.append_log(f'동기화 실패: {message}')
+        self.show_status('당첨 데이터 동기화 실패', 4000)
         QMessageBox.warning(self, '동기화 실패', message)
+
+    def save_proxy_url(self, raw_value: str) -> bool:
+        raw = str(raw_value or '').strip()
+        normalized = normalize_proxy_url(raw)
+        if raw and not normalized:
+            self.settings_page.append_log('프록시 저장 실패: http/https URL만 허용됩니다.')
+            self.show_status('프록시 URL이 올바르지 않습니다.', 4000)
+            return False
+        saved = self.store.set_proxy_url(normalized)
+        self.settings_page.refresh_status()
+        self.settings_page.append_log(f"프록시 설정 저장: {saved or '사용 안 함'}")
+        self.show_status('프록시 설정을 저장했습니다.', 4000)
+        return True
+
+    def update_alert_preferences(self, *, enable_in_app: bool, notify_on_new_result: bool) -> None:
+        current = self.store.get_alert_prefs()
+        updated = self.store.update_alert_prefs(
+            enableInApp=enable_in_app,
+            notifyOnNewResult=notify_on_new_result,
+            enableSystemNotification=current.get('enableSystemNotification', False),
+        )
+        self.settings_page.refresh_status()
+        self.settings_page.append_log(
+            f"알림 설정 저장: 인앱={updated.get('enableInApp')} / 새 결과 알림={updated.get('notifyOnNewResult')} / 시스템={updated.get('enableSystemNotification')}"
+        )
+        self.show_status('알림 설정을 저장했습니다.', 3000)
 
     def closeEvent(self, a0: QCloseEvent | None):
         if a0 is None:

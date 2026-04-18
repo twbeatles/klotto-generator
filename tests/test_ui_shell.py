@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from klotto.config import APP_CONFIG
 from klotto.data.app_state import AppStateStore
 from klotto.ui.main_window import window as window_module
+from klotto.ui.widgets import strategy_editor as strategy_editor_module
 
 
 class StubWinningInfoWidget(QWidget):
@@ -47,6 +48,12 @@ class FakeStatsManager:
         self.winning_data.append(record)
         self.winning_data.sort(key=lambda item: int(item.get('draw_no', 0)), reverse=True)
         return 'inserted'
+
+    def get_draw_data(self, draw_no: int):
+        for item in self.winning_data:
+            if int(item.get('draw_no', 0)) == int(draw_no):
+                return dict(item)
+        return None
 
 
 def _configure_app_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> AppStateStore:
@@ -162,5 +169,223 @@ def test_data_page_remove_and_clear_actions(qapp: QApplication, monkeypatch: pyt
         app.data_page.clear_current_tab()
         assert store.state['ticketBook'] == []
         assert store.state['campaigns'] == []
+    finally:
+        app.close()
+
+
+def test_refresh_all_views_preserves_form_state(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [
+            {'draw_no': 3, 'numbers': [1, 2, 3, 4, 5, 6], 'bonus': 7, 'date': '2026-04-01'},
+            {'draw_no': 2, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-03-25'},
+            {'draw_no': 1, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-18'},
+        ],
+        expected_latest_draw=3,
+    )
+    try:
+        app.generator_page.set_count_spin.setValue(9)
+        app.generator_page.fixed_input.setPlainText('1, 2')
+        app.generator_page.exclude_input.setPlainText('3, 4')
+        app.ai_page.set_count_spin.setValue(7)
+        app.ai_page.fixed_input.setPlainText('5, 6')
+        app.backtest_page.start_draw_spin.setValue(1)
+        app.backtest_page.end_draw_spin.setValue(2)
+        app.backtest_page.qty_spin.setValue(4)
+        selected_before = set()
+        if app.backtest_page.strategy_list.count() > 0:
+            first_item = app.backtest_page.strategy_list.item(0)
+            assert first_item is not None
+            first_item.setSelected(True)
+            selected_before.add(str(first_item.data(window_module.Qt.ItemDataRole.UserRole)))
+        if app.backtest_page.strategy_list.count() > 1:
+            second_item = app.backtest_page.strategy_list.item(1)
+            assert second_item is not None
+            second_item.setSelected(True)
+            selected_before.add(str(second_item.data(window_module.Qt.ItemDataRole.UserRole)))
+
+        app.refresh_all_views()
+
+        assert app.generator_page.set_count_spin.value() == 9
+        assert app.generator_page.fixed_input.toPlainText() == '1, 2'
+        assert app.generator_page.exclude_input.toPlainText() == '3, 4'
+        assert app.ai_page.set_count_spin.value() == 7
+        assert app.ai_page.fixed_input.toPlainText() == '5, 6'
+        assert app.backtest_page.start_draw_spin.value() == 1
+        assert app.backtest_page.end_draw_spin.value() == 2
+        assert app.backtest_page.qty_spin.value() == 4
+        assert store.state['generatorOptions']['num_sets'] == 9
+        assert store.state['generatorOptions']['fixed_nums'] == '1, 2'
+        assert store.state['generatorOptions']['exclude_nums'] == '3, 4'
+        assert {
+            str(item.data(window_module.Qt.ItemDataRole.UserRole))
+            for item in app.backtest_page.strategy_list.selectedItems()
+        } == selected_before
+    finally:
+        app.close()
+
+
+def test_settings_page_saves_proxy_and_alert_preferences(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [
+            {'draw_no': 3, 'numbers': [1, 2, 3, 4, 5, 6], 'bonus': 7, 'date': '2026-04-01'},
+            {'draw_no': 2, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-03-25'},
+            {'draw_no': 1, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-18'},
+        ],
+        expected_latest_draw=3,
+    )
+    try:
+        app.settings_page.proxy_input.setText('not-a-proxy')
+        app.settings_page._save_proxy()
+        assert store.state['proxyUrl'] == ''
+
+        app.settings_page.proxy_input.setText('http://localhost:8080')
+        app.settings_page._save_proxy()
+        assert store.state['proxyUrl'] == 'http://localhost:8080'
+
+        app.settings_page.enable_in_app_chk.setChecked(False)
+        app.settings_page.notify_new_result_chk.setChecked(False)
+        assert store.state['alertPrefs']['enableInApp'] is False
+        assert store.state['alertPrefs']['notifyOnNewResult'] is False
+    finally:
+        app.close()
+
+
+def test_sync_finish_settles_existing_tickets_and_updates_success_meta(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [
+            {'draw_no': 3, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-04-01'},
+            {'draw_no': 2, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-25'},
+            {'draw_no': 1, 'numbers': [21, 22, 23, 24, 25, 26], 'bonus': 27, 'date': '2026-03-18'},
+        ],
+        expected_latest_draw=4,
+    )
+    try:
+        store.add_tickets_bulk(
+            [
+                {
+                    'numbers': [1, 2, 3, 4, 5, 6],
+                    'targetDrawNo': 4,
+                    'source': 'generator',
+                    'quantity': 1,
+                }
+            ],
+            winning_data=app.stats_manager.winning_data,
+        )
+        assert store.state['ticketBook'][0]['checked'] is None
+
+        app._sync_start_latest_draw = 3
+        app._on_sync_finished(
+            {
+                'mode': 'standard',
+                'fetched_records': [
+                    {
+                        'draw_no': 4,
+                        'numbers': [1, 2, 3, 4, 5, 6],
+                        'bonus': 7,
+                        'date': '2026-04-08',
+                        'first_prize': 1000000000,
+                        'first_winners': 10,
+                        'total_sales': 5000000000,
+                    }
+                ],
+                'failed_draws': [],
+                'recentMissingCount': 1,
+                'historicalMissingCount': 0,
+                'cancelled': False,
+            }
+        )
+
+        assert store.state['ticketBook'][0]['checked']['rank'] == 1
+        assert store.state['syncMeta']['mode'] == 'standard'
+        assert store.state['syncMeta']['lastSuccessDrawNo'] == 4
+        assert '새 최신 회차 4회 결과를 반영했습니다.' in app.settings_page.log.toPlainText()
+        assert store.state['dataHealth']['availability'] == 'full'
+    finally:
+        app.close()
+
+
+def test_sync_warning_updates_warning_meta_without_touching_last_success(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [
+            {'draw_no': 3, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-04-01'},
+            {'draw_no': 2, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-25'},
+            {'draw_no': 1, 'numbers': [21, 22, 23, 24, 25, 26], 'bonus': 27, 'date': '2026-03-18'},
+        ],
+        expected_latest_draw=4,
+    )
+    try:
+        store.state['syncMeta']['lastSuccessAt'] = ''
+        store.state['syncMeta']['lastSuccessDrawNo'] = 0
+        app._on_sync_finished(
+            {
+                'mode': 'standard',
+                'fetched_records': [
+                    {
+                        'draw_no': 4,
+                        'numbers': [1, 2, 3, 4, 5, 6],
+                        'bonus': 7,
+                        'date': '2026-04-08',
+                        'first_prize': 1000000000,
+                        'first_winners': 10,
+                        'total_sales': 5000000000,
+                    }
+                ],
+                'failed_draws': [5],
+                'recentMissingCount': 1,
+                'historicalMissingCount': 0,
+                'cancelled': False,
+            }
+        )
+
+        assert store.state['syncMeta']['lastSuccessAt'] == ''
+        assert store.state['syncMeta']['lastSuccessDrawNo'] == 0
+        assert store.state['syncMeta']['lastWarningAt'] != ''
+        assert '5' in store.state['syncMeta']['lastWarningMessage']
+    finally:
+        app.close()
+
+
+def test_strategy_presets_can_be_saved_loaded_and_deleted(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [
+            {'draw_no': 3, 'numbers': [1, 2, 3, 4, 5, 6], 'bonus': 7, 'date': '2026-04-01'},
+            {'draw_no': 2, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-03-25'},
+            {'draw_no': 1, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-18'},
+        ],
+        expected_latest_draw=3,
+    )
+    try:
+        editor = app.generator_page.strategy_editor
+        editor.lookback_spin.setValue(33)
+        monkeypatch.setattr(strategy_editor_module.QInputDialog, 'getText', lambda *args, **kwargs: ('테스트 프리셋', True))
+        editor.save_current_preset()
+
+        presets = store.get_strategy_presets('generator')
+        assert len(presets) == 1
+        assert presets[0]['name'] == '테스트 프리셋'
+
+        editor.lookback_spin.setValue(44)
+        preset_index = editor.preset_combo.findData(presets[0]['id'])
+        editor.preset_combo.setCurrentIndex(preset_index)
+        editor.load_selected_preset()
+        assert editor.lookback_spin.value() == 33
+
+        monkeypatch.setattr(
+            strategy_editor_module.QMessageBox,
+            'question',
+            lambda *args, **kwargs: strategy_editor_module.QMessageBox.StandardButton.Yes,
+        )
+        editor.delete_selected_preset()
+        assert store.get_strategy_presets('generator') == []
     finally:
         app.close()
