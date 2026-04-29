@@ -208,75 +208,96 @@ def test_import_backup_restores_sync_meta_and_prunes_orphans(configured_paths: d
     assert store.state['ticketBook'][0]['checked']['rank'] == 1
 
 
-def test_malformed_state_values_fall_back_to_safe_defaults(configured_paths: dict[str, Path]):
+def test_load_state_recovers_from_malformed_ticket_fields(configured_paths: dict[str, Path]):
     _write_json(
         configured_paths['app_state'],
         {
             'ticketBook': [
                 {
                     'numbers': [1, 2, 3, 4, 5, 6],
-                    'targetDrawNo': 130,
+                    'targetDrawNo': 121,
                     'source': 'generator',
-                    'quantity': 'not-a-number',
-                    'checked': {'drawNo': 130, 'rank': 'bad-rank'},
-                }
+                    'quantity': 'oops',
+                    'checked': {
+                        'drawNo': 121,
+                        'rank': '9',
+                    },
+                },
+                {
+                    'numbers': [7, 8, 9, 10, 11, 12],
+                    'targetDrawNo': 122,
+                    'source': 'ai',
+                    'quantity': -5,
+                    'checked': {
+                        'drawNo': 'bad',
+                        'rank': 'NaN',
+                    },
+                },
+                None,
+                'broken',
             ],
-            'strategyPrefs': {
-                'generator': {
-                    'strategyId': 'ensemble_weighted',
-                    'params': {
-                        'simulationCount': 'bad',
-                        'lookbackWindow': -10,
-                        'wheelPoolSize': 'bad',
-                        'wheelGuarantee': 99,
-                        'seed': 'seed',
-                        'payoutMode': 'bad-mode',
-                    },
-                    'filters': {
-                        'oddEven': ['x', 'y'],
-                        'highLow': [-99, 99],
-                        'sumRange': [400, -10],
-                        'acRange': ['bad', 99],
-                        'maxConsecutivePairs': 'bad',
-                        'endDigitUniqueMin': 99,
-                    },
-                }
-            },
-            'generatorOptions': {
-                'num_sets': 'bad',
-                'fixed_nums': 123,
-                'exclude_nums': None,
-                'check_consecutive': 'false',
-                'consecutive_limit': 'bad',
-            },
+            'proxyUrl': 'socks5://localhost:9999',
         },
     )
 
     store = AppStateStore(configured_paths['app_state'])
 
-    ticket = store.state['ticketBook'][0]
-    assert ticket['quantity'] == 1
-    assert ticket['checked']['rank'] == 0
+    assert len(store.state['ticketBook']) == 2
+    first, second = store.state['ticketBook']
+    assert first['quantity'] == 1
+    assert first['checked']['rank'] == 5
+    assert second['quantity'] == 1
+    assert second['checked'] is None
+    assert store.state['proxyUrl'] == ''
 
+
+def test_load_state_recovers_malformed_strategy_and_generator_options(configured_paths: dict[str, Path]):
+    _write_json(
+        configured_paths['app_state'],
+        {
+            'strategyPrefs': {
+                'generator': {
+                    'strategyId': 'unknown',
+                    'params': {
+                        'simulationCount': 'bad',
+                        'lookbackWindow': 9999,
+                        'wheelPoolSize': '2',
+                        'wheelGuarantee': 'bad',
+                        'seed': 'seed',
+                        'payoutMode': 'bad',
+                    },
+                    'filters': {
+                        'oddEven': ['x', 99],
+                        'sumRange': [300, 1],
+                        'maxConsecutivePairs': '99',
+                        'endDigitUniqueMin': '0',
+                    },
+                },
+            },
+            'generatorOptions': {
+                'num_sets': '9999',
+                'fixed_nums': '1, 2',
+                'exclude_nums': '3, 4',
+                'check_consecutive': 'false',
+                'consecutive_limit': '99',
+            },
+        },
+    )
+
+    store = AppStateStore(configured_paths['app_state'])
     request = store.state['strategyPrefs']['generator']
-    assert request['params']['simulationCount'] == 5000
-    assert request['params']['lookbackWindow'] == 5
-    assert request['params']['wheelPoolSize'] is None
-    assert request['params']['wheelGuarantee'] == 5
-    assert request['params']['seed'] is None
-    assert request['params']['payoutMode'] == 'hybrid_dynamic_first'
-    assert request['filters']['oddEven'] is None
-    assert request['filters']['highLow'] == [0, 6]
-    assert request['filters']['sumRange'] == [0, 300]
-    assert request['filters']['acRange'] is None
-    assert request['filters']['maxConsecutivePairs'] is None
-    assert request['filters']['endDigitUniqueMin'] == 6
 
-    assert store.state['generatorOptions']['num_sets'] == 5
-    assert store.state['generatorOptions']['fixed_nums'] == '123'
-    assert store.state['generatorOptions']['exclude_nums'] == ''
+    assert request['strategyId'] == 'ensemble_weighted'
+    assert request['params']['simulationCount'] == 5000
+    assert request['params']['lookbackWindow'] == 120
+    assert request['params']['wheelPoolSize'] == 7
+    assert request['params']['seed'] is None
+    assert request['filters']['maxConsecutivePairs'] == 5
+    assert request['filters']['endDigitUniqueMin'] == 1
+    assert request['filters']['sumRange'] == [1, 300]
+    assert store.state['generatorOptions']['num_sets'] == int(APP_CONFIG['MAX_SETS'])
     assert store.state['generatorOptions']['check_consecutive'] is False
-    assert store.state['generatorOptions']['consecutive_limit'] == 2
+    assert store.state['generatorOptions']['consecutive_limit'] == 5
 
 
 def test_import_backup_tolerates_malformed_values(configured_paths: dict[str, Path]):
@@ -296,6 +317,7 @@ def test_import_backup_tolerates_malformed_values(configured_paths: dict[str, Pa
                 'strategyPrefs': {
                     'generator': {'strategyId': 'random', 'params': {'simulationCount': 'bad'}, 'filters': {}},
                 },
+                'generatorOptions': {'num_sets': 'bad', 'check_consecutive': 'off'},
             }
         },
         mode='overwrite',
@@ -305,3 +327,6 @@ def test_import_backup_tolerates_malformed_values(configured_paths: dict[str, Pa
     assert store.state['ticketBook'][0]['quantity'] == 1
     assert store.state['ticketBook'][0]['checked']['rank'] == 0
     assert store.state['strategyPrefs']['generator']['strategyId'] == 'random_baseline'
+    assert store.state['strategyPrefs']['generator']['params']['simulationCount'] == 5000
+    assert store.state['generatorOptions']['num_sets'] == 5
+    assert store.state['generatorOptions']['check_consecutive'] is False

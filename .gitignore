@@ -6,9 +6,12 @@ __pycache__/
 venv/
 build/
 dist/
+output/
+tmp/
 
 # IDE / OS
 .idea/
+.vs/
 .DS_Store
 Thumbs.db
 
@@ -35,6 +38,9 @@ htmlcov/
 *.orig
 *.rej
 lotto_history_*.xlsx
+!lotto_history_20260204_132356.xlsx
+lotto_history.xlsx
+lotto_app_backup*.json
 data/*.db-shm
 data/*.db-wal
 data/*.db-journal

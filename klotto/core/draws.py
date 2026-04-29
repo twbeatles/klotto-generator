@@ -1,30 +1,59 @@
-import datetime
-from typing import Any, Dict, Mapping, Optional
+import datetime as dt
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from klotto.core.lotto_rules import safe_int
 
-
-KST = datetime.timezone(datetime.timedelta(hours=9))
-
-
-def _to_kst(now: Optional[datetime.datetime]) -> datetime.datetime:
-    if now is None:
-        return datetime.datetime.now(KST)
-    if now.tzinfo is None:
-        return now.replace(tzinfo=KST)
-    return now.astimezone(KST)
+try:
+    KST = ZoneInfo("Asia/Seoul")
+except Exception:
+    KST = dt.timezone(dt.timedelta(hours=9), name="Asia/Seoul")
+DRAW_BASE_DATE = dt.date(2002, 12, 7)
+DRAW_OPEN_HOUR_KST = 22
 
 
-def estimate_latest_draw(now: Optional[datetime.datetime] = None) -> int:
-    """Estimate the latest available draw based on the Korean weekly draw schedule."""
-    current = _to_kst(now)
-    base_date = datetime.date(2002, 12, 7)
+def _coerce_kst_datetime(now: Optional[dt.datetime] = None) -> dt.datetime:
+    current = now or dt.datetime.now(tz=KST)
+    if current.tzinfo is None:
+        return current.replace(tzinfo=KST)
+    return current.astimezone(KST)
+
+
+def estimate_latest_draw(now: Optional[dt.datetime] = None) -> int:
+    """Estimate the latest available draw using the Saturday 22:00 KST release cutoff."""
+    current = _coerce_kst_datetime(now)
     today = current.date()
-    days_diff = (today - base_date).days
+    days_diff = (today - DRAW_BASE_DATE).days
     estimated_draw = days_diff // 7 + 1
-    if today.weekday() == 5 and current.hour < 22:
+    if current.weekday() == 5 and current.hour < DRAW_OPEN_HOUR_KST:
         estimated_draw -= 1
     return max(1, estimated_draw)
+
+
+def split_missing_draws(
+    existing_draws: Iterable[int],
+    latest_draw: int,
+    *,
+    current_draw: Optional[int] = None,
+    recent_window: int = 20,
+    allowed_missing: Iterable[int] = (),
+) -> Dict[str, List[int]]:
+    normalized_latest = max(0, int(latest_draw or 0))
+    if normalized_latest <= 0:
+        return {"all": [], "recent": [], "historical": []}
+
+    existing = {int(draw_no) for draw_no in existing_draws if int(draw_no) > 0}
+    allowed = {int(draw_no) for draw_no in allowed_missing if int(draw_no) > 0}
+    current = max(normalized_latest, int(current_draw or normalized_latest))
+    recent_start = max(1, current - max(0, int(recent_window or 0)))
+    missing_all = [draw_no for draw_no in range(1, normalized_latest + 1) if draw_no not in existing and draw_no not in allowed]
+    recent_missing = [draw_no for draw_no in missing_all if draw_no >= recent_start]
+    historical_missing = [draw_no for draw_no in missing_all if draw_no < recent_start]
+    return {
+        "all": missing_all,
+        "recent": recent_missing,
+        "historical": historical_missing,
+    }
 
 
 def format_draw_date(date_str: str) -> str:
@@ -88,8 +117,13 @@ def normalize_legacy_draw_payload(payload: Mapping[str, Any]) -> Optional[Dict[s
 
 
 __all__ = [
+    "DRAW_BASE_DATE",
+    "DRAW_OPEN_HOUR_KST",
+    "KST",
+    "_coerce_kst_datetime",
     "convert_new_api_response",
     "estimate_latest_draw",
     "format_draw_date",
     "normalize_legacy_draw_payload",
+    "split_missing_draws",
 ]

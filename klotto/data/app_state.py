@@ -8,10 +8,11 @@ from uuid import uuid4
 
 from klotto.config import APP_CONFIG
 from klotto.core.lotto_rules import calculate_rank, normalize_numbers, normalize_positive_int, safe_int
-from klotto.core.strategy_filters import sanitize_filters
 from klotto.core.strategy_catalog import create_default_strategy_request
+from klotto.core.strategy_filters import sanitize_filters
 from klotto.data.store_utils import load_json_data, save_json_atomic
 from klotto.logging import logger
+from klotto.net.http import normalize_proxy_url
 
 
 class AppStateStore:
@@ -87,30 +88,6 @@ class AppStateStore:
         except TypeError:
             return ''
 
-    def clamp_int(self, value: Any, min_value: int, max_value: int, fallback: int) -> int:
-        parsed = safe_int(value, fallback)
-        return max(min_value, min(max_value, parsed))
-
-    def normalize_optional_int(self, value: Any, min_value: int, max_value: int, fallback: Optional[int]) -> Optional[int]:
-        if value in (None, '', []):
-            return fallback
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return fallback
-        return max(min_value, min(max_value, parsed))
-
-    def normalize_bool(self, value: Any, fallback: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {'1', 'true', 'yes', 'y', 'on'}:
-                return True
-            if lowered in {'0', 'false', 'no', 'n', 'off'}:
-                return False
-        return fallback
-
     def _load_state(self) -> Dict[str, Any]:
         raw = load_json_data(self.state_file, 'app_state', None)
         if isinstance(raw, dict):
@@ -134,7 +111,7 @@ class AppStateStore:
             state['windowGeometry'] = settings.get('window_geometry')
             raw_options = settings.get('options')
             options: Dict[str, Any] = raw_options if isinstance(raw_options, dict) else {}
-            state['generatorOptions'] = self.normalize_generator_options({**defaults['generatorOptions'], **options})
+            state['generatorOptions'] = {**defaults['generatorOptions'], **options}
         logger.info('Migrated legacy favorites/history/settings into app_state.json')
         return state
 
@@ -161,12 +138,12 @@ class AppStateStore:
             'backtest': self.normalize_strategy_request(incoming_prefs.get('backtest') or defaults['strategyPrefs']['backtest']),
         }
         state['strategyPresets'] = [preset for preset in (self.normalize_strategy_preset(item) for item in raw.get('strategyPresets', [])) if preset]
-        state['alertPrefs'] = {**defaults['alertPrefs'], **alert_prefs_raw}
+        state['alertPrefs'] = self.normalize_alert_prefs({**defaults['alertPrefs'], **alert_prefs_raw})
         state['syncMeta'] = {**defaults['syncMeta'], **sync_meta_raw}
         state['dataHealth'] = {**defaults['dataHealth'], **data_health_raw}
         state['theme'] = raw.get('theme') if raw.get('theme') in {'light', 'dark'} else defaults['theme']
         state['windowGeometry'] = raw.get('windowGeometry')
-        state['proxyUrl'] = str(raw.get('proxyUrl') or '')[:500]
+        state['proxyUrl'] = normalize_proxy_url(raw.get('proxyUrl'))[:500]
         state['generatorOptions'] = self.normalize_generator_options({**defaults['generatorOptions'], **generator_options_raw})
         return state
 
@@ -274,7 +251,52 @@ class AppStateStore:
         self.save()
 
     def normalize_ticket_quantity(self, value: Any) -> int:
-        return max(1, safe_int(value, 1))
+        quantity = max(1, safe_int(value, default=1))
+        return quantity if quantity > 0 else 1
+
+    def normalize_generator_options(self, raw: Any) -> Dict[str, Any]:
+        defaults = self.create_default_state()['generatorOptions']
+        options = raw if isinstance(raw, dict) else {}
+        return {
+            'num_sets': self.clamp_int(options.get('num_sets'), 1, int(APP_CONFIG['MAX_SETS']), int(defaults['num_sets'])),
+            'fixed_nums': str(options.get('fixed_nums') or '')[:500],
+            'exclude_nums': str(options.get('exclude_nums') or '')[:500],
+            'check_consecutive': self.normalize_bool(options.get('check_consecutive'), bool(defaults['check_consecutive'])),
+            'consecutive_limit': self.clamp_int(options.get('consecutive_limit'), 0, 5, int(defaults['consecutive_limit'])),
+        }
+
+    def get_generator_options(self) -> Dict[str, Any]:
+        return self.normalize_generator_options(self.state.get('generatorOptions') or {})
+
+    def update_generator_options(self, **updates: Any) -> Dict[str, Any]:
+        self.state['generatorOptions'] = self.normalize_generator_options({**self.get_generator_options(), **updates})
+        self.save()
+        return dict(self.state['generatorOptions'])
+
+    def normalize_alert_prefs(self, raw: Any) -> Dict[str, bool]:
+        prefs = raw if isinstance(raw, dict) else {}
+        return {
+            'enableInApp': bool(prefs.get('enableInApp', True)),
+            'enableSystemNotification': bool(prefs.get('enableSystemNotification', False)),
+            'notifyOnNewResult': bool(prefs.get('notifyOnNewResult', True)),
+        }
+
+    def get_alert_prefs(self) -> Dict[str, bool]:
+        return self.normalize_alert_prefs(self.state.get('alertPrefs') or {})
+
+    def update_alert_prefs(self, **updates: Any) -> Dict[str, bool]:
+        self.state['alertPrefs'] = self.normalize_alert_prefs({**self.get_alert_prefs(), **updates})
+        self.save()
+        return dict(self.state['alertPrefs'])
+
+    def set_proxy_url(self, value: Any) -> str:
+        normalized = normalize_proxy_url(value)[:500]
+        self.state['proxyUrl'] = normalized
+        self.save()
+        return normalized
+
+    def get_strategy_presets(self, scope: str) -> List[Dict[str, Any]]:
+        return [dict(item) for item in self.state['strategyPresets'] if item.get('scope') == scope]
 
     def get_ticket_quantity(self, ticket: Dict[str, Any]) -> int:
         return self.normalize_ticket_quantity(ticket.get('quantity'))
@@ -282,20 +304,46 @@ class AppStateStore:
     def get_total_ticket_count(self, tickets: Optional[Sequence[Dict[str, Any]]] = None) -> int:
         return sum(self.get_ticket_quantity(ticket) for ticket in (tickets or self.state['ticketBook']))
 
+    def clamp_int(self, value: Any, min_value: int, max_value: int, fallback: int) -> int:
+        parsed = safe_int(value, fallback)
+        return max(min_value, min(max_value, parsed))
+
+    def normalize_optional_int(self, value: Any, min_value: int, max_value: int, fallback: Optional[int]) -> Optional[int]:
+        if value in (None, '', []):
+            return fallback
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        if parsed <= 0:
+            return fallback
+        return max(min_value, min(max_value, parsed))
+
+    def normalize_bool(self, value: Any, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {'1', 'true', 'yes', 'y', 'on'}:
+                return True
+            if lowered in {'0', 'false', 'no', 'n', 'off'}:
+                return False
+        return fallback
+
     def normalize_strategy_request(self, raw: Any) -> Dict[str, Any]:
         if not isinstance(raw, dict):
             return create_default_strategy_request('ensemble_weighted')
         strategy_id = str(raw.get('strategyId') or 'ensemble_weighted')
         base = create_default_strategy_request(strategy_id)
         base_params_value = base.get('params')
-        base_params: Dict[str, Any] = cast(Dict[str, Any], base_params_value) if isinstance(base_params_value, dict) else {}
+        base_params = cast(Dict[str, Any], base_params_value) if isinstance(base_params_value, dict) else {}
         base_filters_value = base.get('filters')
-        base_filters: Dict[str, Any] = cast(Dict[str, Any], base_filters_value) if isinstance(base_filters_value, dict) else {}
+        base_filters = cast(Dict[str, Any], base_filters_value) if isinstance(base_filters_value, dict) else {}
         raw_params_value = raw.get('params')
-        raw_params: Dict[str, Any] = cast(Dict[str, Any], raw_params_value) if isinstance(raw_params_value, dict) else {}
-        incoming_params = {**base_params, **raw_params}
+        raw_params = cast(Dict[str, Any], raw_params_value) if isinstance(raw_params_value, dict) else {}
         raw_filters_value = raw.get('filters')
-        raw_filters: Dict[str, Any] = cast(Dict[str, Any], raw_filters_value) if isinstance(raw_filters_value, dict) else {}
+        raw_filters = cast(Dict[str, Any], raw_filters_value) if isinstance(raw_filters_value, dict) else {}
+        incoming_params = {**base_params, **raw_params}
         incoming_filters = sanitize_filters({**base_filters, **raw_filters})
         params = {
             'simulationCount': self.clamp_int(incoming_params.get('simulationCount'), 1000, 20000, int(base_params.get('simulationCount') or 5000)),
@@ -335,17 +383,6 @@ class AppStateStore:
             return None
         return safe_int(text, 0)
 
-    def normalize_generator_options(self, raw: Any) -> Dict[str, Any]:
-        defaults = self.create_default_state()['generatorOptions']
-        options = raw if isinstance(raw, dict) else {}
-        return {
-            'num_sets': self.clamp_int(options.get('num_sets'), 1, int(APP_CONFIG['MAX_SETS']), int(defaults['num_sets'])),
-            'fixed_nums': str(options.get('fixed_nums') or '')[:500],
-            'exclude_nums': str(options.get('exclude_nums') or '')[:500],
-            'check_consecutive': self.normalize_bool(options.get('check_consecutive'), bool(defaults['check_consecutive'])),
-            'consecutive_limit': self.clamp_int(options.get('consecutive_limit'), 0, 5, int(defaults['consecutive_limit'])),
-        }
-
     def normalize_strategy_preset(self, raw: Any) -> Optional[Dict[str, Any]]:
         if not isinstance(raw, dict):
             return None
@@ -379,10 +416,8 @@ class AppStateStore:
         normalized_checked = None
         if checked:
             checked_draw = normalize_positive_int(checked.get('drawNo'))
-            checked_rank = safe_int(checked.get('rank'), 0)
-            if checked_rank < 0 or checked_rank > 5:
-                checked_rank = 0
-            if checked_draw is not None:
+            checked_rank = max(0, min(5, safe_int(checked.get('rank'), default=0)))
+            if checked_draw is not None and 0 <= checked_rank <= 5:
                 normalized_checked = {
                     'drawNo': checked_draw,
                     'rank': checked_rank,
