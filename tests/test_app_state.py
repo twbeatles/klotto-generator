@@ -206,3 +206,102 @@ def test_import_backup_restores_sync_meta_and_prunes_orphans(configured_paths: d
     assert len(store.state['campaigns']) == 1
     assert store.state['campaigns'][0]['id'] == 'campaign-linked'
     assert store.state['ticketBook'][0]['checked']['rank'] == 1
+
+
+def test_malformed_state_values_fall_back_to_safe_defaults(configured_paths: dict[str, Path]):
+    _write_json(
+        configured_paths['app_state'],
+        {
+            'ticketBook': [
+                {
+                    'numbers': [1, 2, 3, 4, 5, 6],
+                    'targetDrawNo': 130,
+                    'source': 'generator',
+                    'quantity': 'not-a-number',
+                    'checked': {'drawNo': 130, 'rank': 'bad-rank'},
+                }
+            ],
+            'strategyPrefs': {
+                'generator': {
+                    'strategyId': 'ensemble_weighted',
+                    'params': {
+                        'simulationCount': 'bad',
+                        'lookbackWindow': -10,
+                        'wheelPoolSize': 'bad',
+                        'wheelGuarantee': 99,
+                        'seed': 'seed',
+                        'payoutMode': 'bad-mode',
+                    },
+                    'filters': {
+                        'oddEven': ['x', 'y'],
+                        'highLow': [-99, 99],
+                        'sumRange': [400, -10],
+                        'acRange': ['bad', 99],
+                        'maxConsecutivePairs': 'bad',
+                        'endDigitUniqueMin': 99,
+                    },
+                }
+            },
+            'generatorOptions': {
+                'num_sets': 'bad',
+                'fixed_nums': 123,
+                'exclude_nums': None,
+                'check_consecutive': 'false',
+                'consecutive_limit': 'bad',
+            },
+        },
+    )
+
+    store = AppStateStore(configured_paths['app_state'])
+
+    ticket = store.state['ticketBook'][0]
+    assert ticket['quantity'] == 1
+    assert ticket['checked']['rank'] == 0
+
+    request = store.state['strategyPrefs']['generator']
+    assert request['params']['simulationCount'] == 5000
+    assert request['params']['lookbackWindow'] == 5
+    assert request['params']['wheelPoolSize'] is None
+    assert request['params']['wheelGuarantee'] == 5
+    assert request['params']['seed'] is None
+    assert request['params']['payoutMode'] == 'hybrid_dynamic_first'
+    assert request['filters']['oddEven'] is None
+    assert request['filters']['highLow'] == [0, 6]
+    assert request['filters']['sumRange'] == [0, 300]
+    assert request['filters']['acRange'] is None
+    assert request['filters']['maxConsecutivePairs'] is None
+    assert request['filters']['endDigitUniqueMin'] == 6
+
+    assert store.state['generatorOptions']['num_sets'] == 5
+    assert store.state['generatorOptions']['fixed_nums'] == '123'
+    assert store.state['generatorOptions']['exclude_nums'] == ''
+    assert store.state['generatorOptions']['check_consecutive'] is False
+    assert store.state['generatorOptions']['consecutive_limit'] == 2
+
+
+def test_import_backup_tolerates_malformed_values(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+
+    result = store.import_backup_payload(
+        {
+            'state': {
+                'ticketBook': [
+                    {
+                        'numbers': [1, 2, 3, 4, 5, 6],
+                        'targetDrawNo': 140,
+                        'quantity': 'bad',
+                        'checked': {'drawNo': 140, 'rank': 'bad'},
+                    }
+                ],
+                'strategyPrefs': {
+                    'generator': {'strategyId': 'random', 'params': {'simulationCount': 'bad'}, 'filters': {}},
+                },
+            }
+        },
+        mode='overwrite',
+    )
+
+    assert result['tickets'] == 1
+    assert store.state['ticketBook'][0]['quantity'] == 1
+    assert store.state['ticketBook'][0]['checked']['rank'] == 0
+    assert store.state['strategyPrefs']['generator']['strategyId'] == 'random_baseline'

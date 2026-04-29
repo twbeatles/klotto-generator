@@ -1,3 +1,6 @@
+from klotto.core.lotto_rules import normalize_numbers
+
+
 def parse_lotto_qr_url(url: str) -> dict:
     """
     Parse Korean Lotto QR URL
@@ -9,37 +12,44 @@ def parse_lotto_qr_url(url: str) -> dict:
     parsed = urlparse(url)
     params = parse_qs(parsed.query)
     v_param = params.get('v', [''])[0]
-    
+
     if not v_param:
         raise ValueError("Invalid QR format")
-        
+
     # Split draw number and games
     parts = v_param.split('m')
     if len(parts) < 2:
         raise ValueError("Invalid format (missing 'm')")
-        
-    draw_no = int(parts[0])
+
+    try:
+        draw_no = int(parts[0])
+    except ValueError as exc:
+        raise ValueError("Invalid draw number") from exc
+    if draw_no <= 0:
+        raise ValueError("Invalid draw number")
     games_str = parts[1]
-    
+
     # Split games ('n' separator)
     game_strs = games_str.split('n')
-    
+
     parsed_sets = []
     for g in game_strs:
         # Each game string should be 12 digits
         clean_g = ''.join(filter(str.isdigit, g))
         if len(clean_g) < 12:
             continue
-            
+
         nums = []
         for i in range(0, 12, 2):
             num = int(clean_g[i:i+2])
             nums.append(num)
-        parsed_sets.append(sorted(nums))
-    
+        normalized = normalize_numbers(nums)
+        if normalized:
+            parsed_sets.append(normalized)
+
     if not parsed_sets:
         raise ValueError("No valid numbers found")
-        
+
     return {
         'draw_no': draw_no,
         'sets': parsed_sets

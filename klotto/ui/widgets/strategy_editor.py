@@ -2,6 +2,7 @@
 
 from typing import Any, Dict, Optional
 
+from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,6 +20,8 @@ from klotto.core.strategy_catalog import create_default_strategy_request, list_s
 
 
 class StrategyRequestEditor(QGroupBox):
+    strategiesChanged = pyqtSignal()
+
     def __init__(self, scope: str, title: str = '전략 설정', parent: Optional[QWidget] = None):
         super().__init__(title, parent)
         self.scope = scope
@@ -123,6 +126,7 @@ class StrategyRequestEditor(QGroupBox):
         index = max(0, self.strategy_combo.findData(current))
         self.strategy_combo.setCurrentIndex(index)
         self.strategy_combo.blockSignals(False)
+        self.strategiesChanged.emit()
 
     def _read_pair(self, left: QSpinBox, right: QSpinBox) -> Optional[list[int]]:
         if left.value() < 0 or right.value() < 0:
@@ -161,10 +165,10 @@ class StrategyRequestEditor(QGroupBox):
         index = self.strategy_combo.findData(strategy_id)
         if index >= 0:
             self.strategy_combo.setCurrentIndex(index)
-        self.lookback_spin.setValue(int(current['params'].get('lookbackWindow') or 20))
-        self.simulation_spin.setValue(int(current['params'].get('simulationCount') or 5000))
-        self.wheel_pool_spin.setValue(int(current['params'].get('wheelPoolSize') or 0))
-        self.wheel_guarantee_spin.setValue(int(current['params'].get('wheelGuarantee') or 0))
+        self._set_spin_value(self.lookback_spin, current['params'].get('lookbackWindow'), 20)
+        self._set_spin_value(self.simulation_spin, current['params'].get('simulationCount'), 5000)
+        self._set_spin_value(self.wheel_pool_spin, current['params'].get('wheelPoolSize'), 0)
+        self._set_spin_value(self.wheel_guarantee_spin, current['params'].get('wheelGuarantee'), 0)
         self.seed_edit.setText('' if current['params'].get('seed') is None else str(current['params'].get('seed')))
         payout_index = self.payout_combo.findData(str(current['params'].get('payoutMode') or 'hybrid_dynamic_first'))
         self.payout_combo.setCurrentIndex(max(0, payout_index))
@@ -172,13 +176,20 @@ class StrategyRequestEditor(QGroupBox):
         self._apply_pair(self.high_min_spin, self.high_max_spin, current['filters'].get('highLow'))
         self._apply_pair(self.sum_min_spin, self.sum_max_spin, current['filters'].get('sumRange'))
         self._apply_pair(self.ac_min_spin, self.ac_max_spin, current['filters'].get('acRange'))
-        self.max_consecutive_spin.setValue(-1 if current['filters'].get('maxConsecutivePairs') is None else int(current['filters']['maxConsecutivePairs']))
-        self.end_digit_spin.setValue(-1 if current['filters'].get('endDigitUniqueMin') is None else int(current['filters']['endDigitUniqueMin']))
+        self._set_spin_value(self.max_consecutive_spin, current['filters'].get('maxConsecutivePairs'), -1)
+        self._set_spin_value(self.end_digit_spin, current['filters'].get('endDigitUniqueMin'), -1)
 
     def _apply_pair(self, left: QSpinBox, right: QSpinBox, values: Any):
         if isinstance(values, (list, tuple)) and len(values) >= 2:
-            left.setValue(int(values[0]))
-            right.setValue(int(values[1]))
+            self._set_spin_value(left, values[0], -1)
+            self._set_spin_value(right, values[1], -1)
         else:
             left.setValue(-1)
             right.setValue(-1)
+
+    def _set_spin_value(self, spin: QSpinBox, value: Any, fallback: int):
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = fallback
+        spin.setValue(max(spin.minimum(), min(spin.maximum(), parsed)))

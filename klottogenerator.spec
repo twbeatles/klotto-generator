@@ -89,6 +89,7 @@ hidden_imports = [
     'klotto.ui.scanner',
     'klotto.ui.widgets',
     'klotto.ui.widgets.strategy_editor',
+    'scripts.export_to_excel',
 ]
 
 

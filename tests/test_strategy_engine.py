@@ -1,7 +1,13 @@
 ﻿from __future__ import annotations
 
+import datetime as dt
+
+import pytest
+
 from klotto.core.backtest import run_backtest
+from klotto.core.draws import estimate_latest_draw
 from klotto.core.strategy_engine import StrategyEngine
+from klotto.qr_utils import parse_lotto_qr_url
 
 
 SAMPLE_DRAWS = [
@@ -79,3 +85,29 @@ def test_backtest_returns_comparisons():
     assert len(result.comparisons) == 2
     assert result.summary['strategyId'] in {'ensemble_weighted', 'hot_frequency'}
     assert result.diagnostics['processedDraws'] > 0
+
+
+def test_estimate_latest_draw_uses_kst_release_cutoff():
+    before_release = estimate_latest_draw(dt.datetime(2026, 4, 25, 21, 59))
+    at_release = estimate_latest_draw(dt.datetime(2026, 4, 25, 22, 0))
+    next_day = estimate_latest_draw(dt.datetime(2026, 4, 26, 9, 0))
+
+    assert at_release == before_release + 1
+    assert next_day == at_release
+
+
+def test_parse_lotto_qr_url_validates_draw_and_numbers():
+    payload = parse_lotto_qr_url('https://m.dhlottery.co.kr/?v=123m010203040506n070809101112')
+    assert payload == {
+        'draw_no': 123,
+        'sets': [[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]],
+    }
+
+    with pytest.raises(ValueError):
+        parse_lotto_qr_url('https://m.dhlottery.co.kr/?v=0m010203040506')
+
+    with pytest.raises(ValueError):
+        parse_lotto_qr_url('https://m.dhlottery.co.kr/?v=123m010101010101')
+
+    with pytest.raises(ValueError):
+        parse_lotto_qr_url('https://m.dhlottery.co.kr/?v=123m004647484950')

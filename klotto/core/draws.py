@@ -4,14 +4,25 @@ from typing import Any, Dict, Mapping, Optional
 from klotto.core.lotto_rules import safe_int
 
 
-def estimate_latest_draw() -> int:
-    """Estimate the latest available draw based on the weekly draw schedule."""
+KST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _to_kst(now: Optional[datetime.datetime]) -> datetime.datetime:
+    if now is None:
+        return datetime.datetime.now(KST)
+    if now.tzinfo is None:
+        return now.replace(tzinfo=KST)
+    return now.astimezone(KST)
+
+
+def estimate_latest_draw(now: Optional[datetime.datetime] = None) -> int:
+    """Estimate the latest available draw based on the Korean weekly draw schedule."""
+    current = _to_kst(now)
     base_date = datetime.date(2002, 12, 7)
-    today = datetime.date.today()
+    today = current.date()
     days_diff = (today - base_date).days
     estimated_draw = days_diff // 7 + 1
-    now = datetime.datetime.now()
-    if today.weekday() == 5 and now.hour < 21:
+    if today.weekday() == 5 and current.hour < 22:
         estimated_draw -= 1
     return max(1, estimated_draw)
 

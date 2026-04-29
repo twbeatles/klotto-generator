@@ -3,11 +3,12 @@
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 from uuid import uuid4
 
 from klotto.config import APP_CONFIG
-from klotto.core.lotto_rules import calculate_rank, normalize_numbers, normalize_positive_int
+from klotto.core.lotto_rules import calculate_rank, normalize_numbers, normalize_positive_int, safe_int
+from klotto.core.strategy_filters import sanitize_filters
 from klotto.core.strategy_catalog import create_default_strategy_request
 from klotto.data.store_utils import load_json_data, save_json_atomic
 from klotto.logging import logger
@@ -86,6 +87,30 @@ class AppStateStore:
         except TypeError:
             return ''
 
+    def clamp_int(self, value: Any, min_value: int, max_value: int, fallback: int) -> int:
+        parsed = safe_int(value, fallback)
+        return max(min_value, min(max_value, parsed))
+
+    def normalize_optional_int(self, value: Any, min_value: int, max_value: int, fallback: Optional[int]) -> Optional[int]:
+        if value in (None, '', []):
+            return fallback
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return fallback
+        return max(min_value, min(max_value, parsed))
+
+    def normalize_bool(self, value: Any, fallback: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {'1', 'true', 'yes', 'y', 'on'}:
+                return True
+            if lowered in {'0', 'false', 'no', 'n', 'off'}:
+                return False
+        return fallback
+
     def _load_state(self) -> Dict[str, Any]:
         raw = load_json_data(self.state_file, 'app_state', None)
         if isinstance(raw, dict):
@@ -109,7 +134,7 @@ class AppStateStore:
             state['windowGeometry'] = settings.get('window_geometry')
             raw_options = settings.get('options')
             options: Dict[str, Any] = raw_options if isinstance(raw_options, dict) else {}
-            state['generatorOptions'] = {**defaults['generatorOptions'], **options}
+            state['generatorOptions'] = self.normalize_generator_options({**defaults['generatorOptions'], **options})
         logger.info('Migrated legacy favorites/history/settings into app_state.json')
         return state
 
@@ -142,7 +167,7 @@ class AppStateStore:
         state['theme'] = raw.get('theme') if raw.get('theme') in {'light', 'dark'} else defaults['theme']
         state['windowGeometry'] = raw.get('windowGeometry')
         state['proxyUrl'] = str(raw.get('proxyUrl') or '')[:500]
-        state['generatorOptions'] = {**defaults['generatorOptions'], **generator_options_raw}
+        state['generatorOptions'] = self.normalize_generator_options({**defaults['generatorOptions'], **generator_options_raw})
         return state
 
     def save(self) -> bool:
@@ -249,8 +274,7 @@ class AppStateStore:
         self.save()
 
     def normalize_ticket_quantity(self, value: Any) -> int:
-        quantity = max(1, int(value or 1))
-        return quantity if quantity > 0 else 1
+        return max(1, safe_int(value, 1))
 
     def get_ticket_quantity(self, ticket: Dict[str, Any]) -> int:
         return self.normalize_ticket_quantity(ticket.get('quantity'))
@@ -263,11 +287,63 @@ class AppStateStore:
             return create_default_strategy_request('ensemble_weighted')
         strategy_id = str(raw.get('strategyId') or 'ensemble_weighted')
         base = create_default_strategy_request(strategy_id)
+        base_params_value = base.get('params')
+        base_params: Dict[str, Any] = cast(Dict[str, Any], base_params_value) if isinstance(base_params_value, dict) else {}
+        base_filters_value = base.get('filters')
+        base_filters: Dict[str, Any] = cast(Dict[str, Any], base_filters_value) if isinstance(base_filters_value, dict) else {}
+        raw_params_value = raw.get('params')
+        raw_params: Dict[str, Any] = cast(Dict[str, Any], raw_params_value) if isinstance(raw_params_value, dict) else {}
+        incoming_params = {**base_params, **raw_params}
+        raw_filters_value = raw.get('filters')
+        raw_filters: Dict[str, Any] = cast(Dict[str, Any], raw_filters_value) if isinstance(raw_filters_value, dict) else {}
+        incoming_filters = sanitize_filters({**base_filters, **raw_filters})
+        params = {
+            'simulationCount': self.clamp_int(incoming_params.get('simulationCount'), 1000, 20000, int(base_params.get('simulationCount') or 5000)),
+            'lookbackWindow': self.clamp_int(incoming_params.get('lookbackWindow'), 5, 120, int(base_params.get('lookbackWindow') or 20)),
+            'wheelPoolSize': self.normalize_optional_int(incoming_params.get('wheelPoolSize'), 7, 20, base_params.get('wheelPoolSize')),
+            'wheelGuarantee': self.normalize_optional_int(incoming_params.get('wheelGuarantee'), 2, 5, base_params.get('wheelGuarantee')),
+            'seed': self.normalize_seed(incoming_params.get('seed')),
+            'payoutMode': incoming_params.get('payoutMode') if incoming_params.get('payoutMode') in {'hybrid_dynamic_first', 'fast_fixed'} else base_params.get('payoutMode', 'hybrid_dynamic_first'),
+        }
+        filters = {
+            'oddEven': self.normalize_filter_pair(incoming_filters.get('oddEven'), 0, 6),
+            'highLow': self.normalize_filter_pair(incoming_filters.get('highLow'), 0, 6),
+            'sumRange': self.normalize_filter_pair(incoming_filters.get('sumRange'), 0, 300),
+            'acRange': self.normalize_filter_pair(incoming_filters.get('acRange'), 0, 20),
+            'maxConsecutivePairs': None if incoming_filters.get('maxConsecutivePairs') is None else self.clamp_int(incoming_filters.get('maxConsecutivePairs'), 0, 5, 2),
+            'endDigitUniqueMin': None if incoming_filters.get('endDigitUniqueMin') is None else self.clamp_int(incoming_filters.get('endDigitUniqueMin'), 1, 6, 4),
+        }
         return {
-            'strategyId': str(raw.get('strategyId') or base['strategyId']),
+            'strategyId': str(base['strategyId']),
             'evidenceTier': str(raw.get('evidenceTier') or base['evidenceTier']),
-            'params': {**base['params'], **(raw.get('params') or {})},
-            'filters': {**base['filters'], **(raw.get('filters') or {})},
+            'params': params,
+            'filters': filters,
+        }
+
+    def normalize_filter_pair(self, value: Any, min_value: int, max_value: int) -> Optional[List[int]]:
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            return None
+        left = self.clamp_int(value[0], min_value, max_value, min_value)
+        right = self.clamp_int(value[1], min_value, max_value, max_value)
+        return [left, right] if left <= right else [right, left]
+
+    def normalize_seed(self, value: Any) -> Optional[int]:
+        if value in (None, '', []):
+            return None
+        text = str(value).strip()
+        if not text.lstrip('-').isdigit():
+            return None
+        return safe_int(text, 0)
+
+    def normalize_generator_options(self, raw: Any) -> Dict[str, Any]:
+        defaults = self.create_default_state()['generatorOptions']
+        options = raw if isinstance(raw, dict) else {}
+        return {
+            'num_sets': self.clamp_int(options.get('num_sets'), 1, int(APP_CONFIG['MAX_SETS']), int(defaults['num_sets'])),
+            'fixed_nums': str(options.get('fixed_nums') or '')[:500],
+            'exclude_nums': str(options.get('exclude_nums') or '')[:500],
+            'check_consecutive': self.normalize_bool(options.get('check_consecutive'), bool(defaults['check_consecutive'])),
+            'consecutive_limit': self.clamp_int(options.get('consecutive_limit'), 0, 5, int(defaults['consecutive_limit'])),
         }
 
     def normalize_strategy_preset(self, raw: Any) -> Optional[Dict[str, Any]]:
@@ -303,8 +379,10 @@ class AppStateStore:
         normalized_checked = None
         if checked:
             checked_draw = normalize_positive_int(checked.get('drawNo'))
-            checked_rank = int(checked.get('rank') or 0)
-            if checked_draw is not None and 0 <= checked_rank <= 5:
+            checked_rank = safe_int(checked.get('rank'), 0)
+            if checked_rank < 0 or checked_rank > 5:
+                checked_rank = 0
+            if checked_draw is not None:
                 normalized_checked = {
                     'drawNo': checked_draw,
                     'rank': checked_rank,

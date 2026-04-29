@@ -1,13 +1,15 @@
 ﻿from __future__ import annotations
 
 import datetime as dt
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QByteArray, QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QCloseEvent, QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QDialog,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -35,7 +37,7 @@ from PyQt6.QtWidgets import (
 from klotto.config import APP_CONFIG
 from klotto.core.backtest import run_backtest
 from klotto.core.draws import estimate_latest_draw
-from klotto.core.lotto_rules import parse_number_expression
+from klotto.core.lotto_rules import parse_number_expression, validate_generation_constraints
 from klotto.core.stats import WinningStatsManager
 from klotto.core.sync_service import LottoSyncWorker
 from klotto.core.strategy_engine import StrategyEngine
@@ -44,7 +46,8 @@ from klotto.data.exporter import DataExporter
 from klotto.data.favorites import FavoritesManager
 from klotto.data.history import HistoryManager
 from klotto.logging import logger
-from klotto.ui.dialogs import ExportImportDialog
+from klotto.ui.dialogs import ExportImportDialog, WinningCheckDialog
+from klotto.ui.scanner import QRCodeScannerDialog
 from klotto.ui.theme import ThemeManager
 from klotto.ui.widgets import StrategyRequestEditor, WinningInfoWidget
 
@@ -74,6 +77,7 @@ class NumberGenerationPage(QWidget):
         self.enable_campaign = enable_campaign
         self.generated_rows: List[Dict[str, Any]] = []
         self._task: Optional[TaskThread] = None
+        self._generator_options_loaded = False
         self._setup_ui(title)
         self.refresh_defaults()
 
@@ -166,6 +170,9 @@ class NumberGenerationPage(QWidget):
     def refresh_defaults(self):
         pref = self.app_window.store.get_strategy_pref(self.scope)
         self.strategy_editor.apply_request(pref)
+        if self.scope == 'generator' and not self._generator_options_loaded:
+            self._apply_generator_options()
+            self._generator_options_loaded = True
         next_draw = self.app_window.get_next_target_draw()
         self.target_draw_spin.setValue(next_draw)
         if self.enable_campaign:
@@ -190,6 +197,13 @@ class NumberGenerationPage(QWidget):
     def _parse_fixed_exclude(self) -> tuple[List[int], List[int]]:
         fixed = sorted(parse_number_expression(self.fixed_input.toPlainText(), '고정수'))
         exclude = sorted(parse_number_expression(self.exclude_input.toPlainText(), '제외수'))
+        validation_error = validate_generation_constraints(
+            fixed,
+            exclude,
+            max_fixed_nums=int(APP_CONFIG['MAX_FIXED_NUMS']),
+        )
+        if validation_error:
+            raise ValueError(validation_error)
         return fixed, exclude
 
     def _build_request(self) -> Dict[str, Any]:
@@ -197,11 +211,47 @@ class NumberGenerationPage(QWidget):
         self.app_window.store.set_strategy_pref(self.scope, request)
         return request
 
+    def _apply_generator_options(self):
+        options = self.app_window.store.normalize_generator_options(self.app_window.store.state.get('generatorOptions') or {})
+        self.app_window.store.state['generatorOptions'] = options
+        self.set_count_spin.setValue(int(options.get('num_sets') or 5))
+        self.fixed_input.setPlainText(str(options.get('fixed_nums') or ''))
+        self.exclude_input.setPlainText(str(options.get('exclude_nums') or ''))
+        if bool(options.get('check_consecutive', True)):
+            self.strategy_editor.max_consecutive_spin.setValue(int(options.get('consecutive_limit') or 2))
+        else:
+            self.strategy_editor.max_consecutive_spin.setValue(-1)
+
+    def _persist_generator_options(self, request: Dict[str, Any]):
+        if self.scope != 'generator':
+            return
+        filter_value = request.get('filters')
+        filters: Dict[str, Any] = filter_value if isinstance(filter_value, dict) else {}
+        consecutive_limit = filters.get('maxConsecutivePairs')
+        check_consecutive = consecutive_limit is not None
+        raw_options = {
+            'num_sets': self.set_count_spin.value(),
+            'fixed_nums': self.fixed_input.toPlainText(),
+            'exclude_nums': self.exclude_input.toPlainText(),
+            'check_consecutive': check_consecutive,
+            'consecutive_limit': consecutive_limit if check_consecutive else 2,
+        }
+        self.app_window.store.state['generatorOptions'] = self.app_window.store.normalize_generator_options(raw_options)
+        self.app_window.store.save()
+
+    def _show_input_error(self, message: str):
+        QMessageBox.warning(self, '입력 오류', message)
+
     def run_generation(self):
         if self.scope == 'ai' and not self.app_window.can_use_advanced_features(show_message=True):
             return
-        fixed, exclude = self._parse_fixed_exclude()
-        request = self._build_request()
+        try:
+            fixed, exclude = self._parse_fixed_exclude()
+            request = self._build_request()
+            self._persist_generator_options(request)
+        except ValueError as exc:
+            self._show_input_error(str(exc))
+            return
         count = self.set_count_spin.value()
 
         def task() -> List[Dict[str, Any]]:
@@ -226,8 +276,13 @@ class NumberGenerationPage(QWidget):
             return
         if self.scope == 'ai' and not self.app_window.can_use_advanced_features(show_message=True):
             return
-        fixed, exclude = self._parse_fixed_exclude()
-        request = self._build_request()
+        try:
+            fixed, exclude = self._parse_fixed_exclude()
+            request = self._build_request()
+            self._persist_generator_options(request)
+        except ValueError as exc:
+            self._show_input_error(str(exc))
+            return
         start_draw = self.campaign_start_spin.value()
         weeks = self.campaign_weeks_spin.value()
         sets_per_week = self.campaign_sets_spin.value()
@@ -420,6 +475,7 @@ class BacktestPage(QWidget):
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
         self.strategy_editor = StrategyRequestEditor('backtest', '전략 기준값')
+        self.strategy_editor.strategiesChanged.connect(self.refresh_strategy_list)
         top.addWidget(self.strategy_editor, 2)
 
         side = QGroupBox('백테스트 실행')
@@ -454,18 +510,26 @@ class BacktestPage(QWidget):
         latest = self.app_window.get_latest_draw_no()
         self.start_draw_spin.setValue(max(1, latest - 30))
         self.end_draw_spin.setValue(latest)
+        self.refresh_strategy_list()
+        self.update_data_gate()
+
+    def refresh_strategy_list(self):
+        selected_ids = {
+            str(item.data(Qt.ItemDataRole.UserRole))
+            for item in self.strategy_list.selectedItems()
+            if item.data(Qt.ItemDataRole.UserRole)
+        }
         self.strategy_list.clear()
-        for meta in self.strategy_editor.strategy_combo.model().stringList() if False else []:
-            pass
         for index in range(self.strategy_editor.strategy_combo.count()):
             item = QListWidgetItem(self.strategy_editor.strategy_combo.itemText(index))
             item.setData(Qt.ItemDataRole.UserRole, self.strategy_editor.strategy_combo.itemData(index))
+            if str(item.data(Qt.ItemDataRole.UserRole)) in selected_ids:
+                item.setSelected(True)
             self.strategy_list.addItem(item)
-        if self.strategy_list.count() > 0:
+        if self.strategy_list.count() > 0 and not self.strategy_list.selectedItems():
             first_item = self.strategy_list.item(0)
             if first_item is not None:
                 first_item.setSelected(True)
-        self.update_data_gate()
 
     def update_data_gate(self):
         allowed = self.app_window.is_data_health_full()
@@ -535,9 +599,16 @@ class CheckPage(QWidget):
         self.item_list = QListWidget()
         controls.addWidget(self.item_list, 2)
         layout.addLayout(controls)
+
+        button_row = QHBoxLayout()
         self.check_btn = QPushButton('당첨 확인')
         self.check_btn.clicked.connect(self.run_check)
-        layout.addWidget(self.check_btn)
+        button_row.addWidget(self.check_btn)
+        self.qr_scan_btn = QPushButton('QR 스캔')
+        self.qr_scan_btn.clicked.connect(self.open_qr_scanner)
+        button_row.addWidget(self.qr_scan_btn)
+        layout.addLayout(button_row)
+
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(['설명', '회차', '일치', '순위', '비고'])
         layout.addWidget(self.results_table, 1)
@@ -584,6 +655,23 @@ class CheckPage(QWidget):
             self.results_table.setItem(next_row, 3, QTableWidgetItem(str(item.get('rank'))))
             self.results_table.setItem(next_row, 4, QTableWidgetItem(str(item.get('note') or '')))
 
+    def open_qr_scanner(self):
+        scanner = QRCodeScannerDialog(self)
+        if scanner.exec() != QDialog.DialogCode.Accepted:
+            return
+        payload = scanner.scanned_data
+        if not payload:
+            QMessageBox.warning(self, 'QR 스캔', '스캔된 QR 데이터가 없습니다.')
+            return
+        dialog = WinningCheckDialog(
+            self.app_window.favorites_manager,
+            self.app_window.history_manager,
+            self.app_window.stats_manager,
+            self,
+            qr_payload=payload,
+        )
+        dialog.exec()
+
 
 class DataPage(QWidget):
     def __init__(self, app_window: 'LottoApp'):
@@ -600,6 +688,9 @@ class DataPage(QWidget):
         self.legacy_btn = QPushButton('레거시 가져오기/내보내기')
         self.legacy_btn.clicked.connect(self.open_legacy_dialog)
         actions.addWidget(self.legacy_btn)
+        self.export_excel_btn = QPushButton('당첨 DB 엑셀 내보내기')
+        self.export_excel_btn.clicked.connect(self.export_winning_excel)
+        actions.addWidget(self.export_excel_btn)
         self.remove_btn = QPushButton('선택 항목 삭제')
         self.remove_btn.clicked.connect(self.remove_selected)
         actions.addWidget(self.remove_btn)
@@ -716,6 +807,31 @@ class DataPage(QWidget):
         self.app_window.refresh_all_views()
         self.app_window.show_status('백업을 불러왔습니다.', 4000)
 
+    def export_winning_excel(self):
+        filepath, _ = QFileDialog.getSaveFileName(self, '당첨 DB 엑셀 저장', 'lotto_history.xlsx', 'Excel 파일 (*.xlsx)')
+        if not filepath:
+            return
+        try:
+            from scripts.export_to_excel import ensure_openpyxl, export_to_excel
+        except Exception as exc:
+            logger.exception('Excel exporter import failed')
+            QMessageBox.warning(self, '엑셀 내보내기', f'엑셀 내보내기 기능을 초기화하지 못했습니다.\n{exc}')
+            return
+
+        if not ensure_openpyxl():
+            QMessageBox.warning(self, '엑셀 내보내기', '엑셀 내보내기에는 requirements-optional.txt의 openpyxl 설치가 필요합니다.')
+            return
+
+        db_path = Path(APP_CONFIG['LOTTO_HISTORY_DB'])
+        if not db_path.exists():
+            QMessageBox.warning(self, '엑셀 내보내기', f'당첨번호 데이터베이스를 찾을 수 없습니다.\n{db_path}')
+            return
+
+        if export_to_excel(Path(filepath)):
+            self.app_window.show_status('당첨 DB를 엑셀로 저장했습니다.', 4000)
+        else:
+            QMessageBox.warning(self, '엑셀 내보내기', '내보낼 당첨 데이터가 없거나 저장에 실패했습니다.')
+
     def open_legacy_dialog(self):
         dialog = ExportImportDialog(self.app_window.favorites_manager, self.app_window.history_manager, self.app_window.stats_manager, self)
         dialog.exec()
@@ -812,9 +928,11 @@ class LottoApp(QMainWindow):
         geometry = self.store.state.get('windowGeometry')
         if isinstance(geometry, str) and geometry:
             try:
-                self.restoreGeometry(bytes(geometry, 'ascii'))
-            except Exception:
-                pass
+                restored = self.restoreGeometry(QByteArray.fromBase64(geometry.encode('ascii')))
+                if not restored:
+                    logger.warning('Stored window geometry could not be restored')
+            except Exception as exc:
+                logger.warning('Stored window geometry is invalid: %s', exc)
         self.apply_theme()
 
     def apply_theme(self):
@@ -926,7 +1044,9 @@ class LottoApp(QMainWindow):
     def _on_sync_finished(self, summary: Dict[str, Any]):
         fetched_records = summary.get('fetched_records', [])
         failed_draws = summary.get('failed_draws', [])
-        inserted = updated = unchanged = 0
+        target_count = int(summary.get('target_count') or 0)
+        cancelled = bool(summary.get('cancelled', False))
+        inserted = updated = unchanged = invalid = 0
         for record in fetched_records:
             status = self.stats_manager.upsert_winning_data(
                 record['draw_no'],
@@ -943,21 +1063,60 @@ class LottoApp(QMainWindow):
                 updated += 1
             elif status == 'unchanged':
                 unchanged += 1
+            else:
+                invalid += 1
         now = dt.datetime.now().isoformat()
         latest = self.get_latest_draw_no()
-        self.store.state['syncMeta'] = {
-            **self.store.state['syncMeta'],
+        success_count = inserted + updated + unchanged
+        up_to_date = target_count == 0 and not failed_draws and not cancelled
+        full_success = (success_count > 0 and not failed_draws and invalid == 0 and not cancelled) or up_to_date
+        partial_success = success_count > 0 and (bool(failed_draws) or invalid > 0 or cancelled)
+        full_failure = not full_success and not partial_success
+        failure_parts = []
+        if failed_draws:
+            failure_parts.append('실패 회차: ' + ', '.join(str(item) for item in failed_draws[:5]))
+        if invalid:
+            failure_parts.append(f'저장 실패 {invalid}건')
+        if cancelled:
+            failure_parts.append('동기화 취소')
+        detail_message = ' / '.join(failure_parts)
+
+        sync_meta = {
+            **(self.store.state.get('syncMeta') or {}),
             'mode': 'automatic_fallback',
             'currentSource': '기본 자동 동기화',
-            'lastSuccessAt': now,
-            'lastSuccessDrawNo': latest,
-            'lastFailureAt': now if failed_draws else self.store.state['syncMeta'].get('lastFailureAt', ''),
-            'lastFailureMessage': ', '.join(str(item) for item in failed_draws[:5]) if failed_draws else '',
         }
+        if full_success:
+            sync_meta.update({
+                'lastSuccessAt': now,
+                'lastSuccessDrawNo': latest,
+                'lastFailureAt': '',
+                'lastFailureMessage': '',
+                'lastWarningAt': '',
+                'lastWarningMessage': '',
+            })
+            outcome = '성공'
+        elif partial_success:
+            sync_meta.update({
+                'lastSuccessAt': now,
+                'lastSuccessDrawNo': latest,
+                'lastFailureAt': '',
+                'lastFailureMessage': '',
+                'lastWarningAt': now,
+                'lastWarningMessage': detail_message or '일부 회차를 반영하지 못했습니다.',
+            })
+            outcome = '부분 성공'
+        else:
+            sync_meta.update({
+                'lastFailureAt': now,
+                'lastFailureMessage': detail_message or '동기화 대상 회차를 반영하지 못했습니다.',
+            })
+            outcome = '실패'
+        self.store.state['syncMeta'] = sync_meta
         self.store.save()
         self.refresh_all_views()
-        self.settings_page.append_log(f'동기화 완료: inserted={inserted}, updated={updated}, unchanged={unchanged}, failed={len(failed_draws)}')
-        self.show_status('당첨 데이터 동기화 완료', 4000)
+        self.settings_page.append_log(f'동기화 {outcome}: inserted={inserted}, updated={updated}, unchanged={unchanged}, invalid={invalid}, failed={len(failed_draws)}')
+        self.show_status(f'당첨 데이터 동기화 {outcome}', 4000)
 
     def _on_sync_error(self, message: str):
         now = dt.datetime.now().isoformat()
