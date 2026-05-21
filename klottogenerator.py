@@ -9,6 +9,12 @@ from klotto.config import APP_CONFIG, DHLOTTERY_API_URL, LOTTO_COLORS, THEMES
 from klotto.core.analysis import NumberAnalyzer
 from klotto.core.backtest import BacktestResult, run_backtest
 from klotto.core.generator import SmartNumberGenerator
+from klotto.core.pension720_engine import Pension720Engine
+from klotto.core.pension720_strategy_catalog import (
+    create_default_pension720_strategy_request,
+    list_pension720_strategies,
+    resolve_pension720_strategy_id,
+)
 from klotto.core.stats import WinningStatsManager
 from klotto.core.strategy_catalog import (
     create_default_strategy_request,
@@ -25,6 +31,8 @@ from klotto.data.models import (
     BacktestComparison,
     CampaignEntry,
     DataHealth,
+    Pension720CampaignEntry,
+    Pension720TicketEntry,
     StrategyRequest,
     SyncMeta,
     TicketCheck,
@@ -66,6 +74,9 @@ __all__ = [
     "LottoBall",
     "LottoNetworkManager",
     "NumberAnalyzer",
+    "Pension720CampaignEntry",
+    "Pension720Engine",
+    "Pension720TicketEntry",
     "QRCodeDialog",
     "RealStatsDialog",
     "ResultRow",
@@ -82,11 +93,14 @@ __all__ = [
     "WinningInfoWidget",
     "WinningStatsManager",
     "create_default_strategy_request",
+    "create_default_pension720_strategy_request",
     "exception_hook",
     "list_strategies",
+    "list_pension720_strategies",
     "logger",
     "main",
     "resolve_strategy_id",
+    "resolve_pension720_strategy_id",
     "run_backtest",
     "setup_logging",
 ]

@@ -104,7 +104,7 @@ def test_navigation_and_data_health_gate(qapp: QApplication, monkeypatch: pytest
         expected_latest_draw=4,
     )
     try:
-        assert app.nav_list.count() == 7
+        assert app.nav_list.count() == 8
         app.nav_list.setCurrentRow(3)
         assert app.stack.currentIndex() == 3
 
@@ -549,5 +549,75 @@ def test_backtest_strategy_list_refreshes_when_experimental_toggle_changes(qapp:
 
         assert app.backtest_page.strategy_list.count() > initial_count
         assert 'skip_hit_weighted' in ids
+    finally:
+        app.close()
+
+
+def test_pension720_page_gate_and_recommendation_flow(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(window_module, 'load_pension720_static_data', lambda: [])
+    app, store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [
+            {'draw_no': 3, 'numbers': [1, 2, 3, 4, 5, 6], 'bonus': 7, 'date': '2026-04-01'},
+            {'draw_no': 2, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-03-25'},
+            {'draw_no': 1, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-18'},
+        ],
+        expected_latest_draw=3,
+    )
+    try:
+        assert not app.pension720_page.recommend_btn.isEnabled()
+        assert not app.pension720_page.check_latest_btn.isEnabled()
+
+        app.pension720_page.pension720_stats = [
+            {
+                'draw_no': 315,
+                'date': '2026-05-14',
+                'group': 2,
+                'digits': [5, 3, 7, 5, 3, 0],
+                'number': '537530',
+                'bonus_digits': [3, 5, 8, 1, 2, 7],
+                'bonus_number': '358127',
+            },
+            {
+                'draw_no': 314,
+                'date': '2026-05-07',
+                'group': 2,
+                'digits': [0, 6, 0, 7, 2, 7],
+                'number': '060727',
+                'bonus_digits': [2, 9, 3, 1, 6, 0],
+                'bonus_number': '293160',
+            },
+            {
+                'draw_no': 313,
+                'date': '2026-04-30',
+                'group': 5,
+                'digits': [7, 2, 6, 4, 9, 3],
+                'number': '726493',
+                'bonus_digits': [8, 8, 2, 0, 3, 3],
+                'bonus_number': '882033',
+            },
+        ]
+        app.pension720_page.target_draw_spin.setValue(315)
+        app.pension720_page.strategy_combo.setCurrentIndex(app.pension720_page.strategy_combo.findData('trailing_match'))
+        app.pension720_page.seed_edit.setText('720')
+        app.pension720_page.groups_edit.setText('2')
+        app.pension720_page.fixed_digits_edit.setText('1=0')
+        app.pension720_page.count_spin.setValue(2)
+        app.pension720_page.refresh_view_state()
+
+        rows = window_module.Pension720Engine(app.pension720_page.pension720_stats).recommend(
+            {'setCount': 2, 'request': app.pension720_page.build_request()}
+        )
+        app.pension720_page._on_recommendations_ready(rows)
+
+        assert app.pension720_page.recommendations_table.rowCount() == 2
+        app.pension720_page.recommendations_table.selectRow(0)
+        app.pension720_page.save_selected_recommendation()
+        assert len(store.state['pension720Tickets']) == 1
+        assert store.state['pension720Tickets'][0]['number'].startswith('0')
+
+        app.pension720_page.run_saved_ticket_check()
+        assert app.pension720_page.check_table.rowCount() == 1
     finally:
         app.close()

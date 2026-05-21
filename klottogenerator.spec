@@ -81,11 +81,14 @@ hidden_imports = [
     'klotto.core.draws',
     'klotto.core.sync_service',
     'klotto.core.backtest',
+    'klotto.core.pension720_engine',
+    'klotto.core.pension720_strategy_catalog',
     'klotto.core.strategy_catalog',
     'klotto.core.strategy_engine',
     'klotto.core.strategy_filters',
     'klotto.data.app_state',
     'klotto.data.models',
+    'klotto.data.pension720',
     'klotto.net.client',
     'klotto.net.http',
     'klotto.ui.dialogs',
@@ -96,6 +99,7 @@ hidden_imports = [
     'klotto.ui.widgets.winning_info',
     'scripts.common',
     'scripts.export_to_excel',
+    'scripts.fetch_pension720_stats',
     'zoneinfo',
 ]
 
@@ -127,13 +131,18 @@ if has_module('tzdata'):
     optional_datas.extend(collect_data_files('tzdata'))
 
 
+data_files = []
+if (project_path / 'data' / 'lotto_history.db').exists():
+    data_files.append((str(project_path / 'data' / 'lotto_history.db'), 'data'))
+if (project_path / 'data' / 'pension720_stats.json').exists():
+    data_files.append((str(project_path / 'data' / 'pension720_stats.json'), 'data'))
+
+
 a = Analysis(
     [entry_script],
     pathex=[str(project_path)],
     binaries=optional_binaries,
-    datas=[
-        (str(project_path / 'data' / 'lotto_history.db'), 'data'),
-    ] + optional_datas if (project_path / 'data' / 'lotto_history.db').exists() else optional_datas,
+    datas=data_files + optional_datas,
     hiddenimports=hidden_imports + optional_hidden_imports,
     hookspath=[],
     hooksconfig={},

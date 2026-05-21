@@ -2,14 +2,18 @@
 
 import datetime as dt
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 from uuid import uuid4
 
 from klotto.config import APP_CONFIG
 from klotto.core.lotto_rules import calculate_rank, normalize_numbers, normalize_positive_int, safe_int
+from klotto.core.pension720_engine import normalize_pension720_request
+from klotto.core.pension720_strategy_catalog import create_default_pension720_strategy_request
 from klotto.core.strategy_catalog import create_default_strategy_request
 from klotto.core.strategy_filters import sanitize_filters
+from klotto.data.pension720 import normalize_six_digits
 from klotto.data.store_utils import load_json_data, save_json_atomic
 from klotto.logging import logger
 from klotto.net.http import normalize_proxy_url
@@ -29,10 +33,13 @@ class AppStateStore:
             'history': [],
             'ticketBook': [],
             'campaigns': [],
+            'pension720Tickets': [],
+            'pension720Campaigns': [],
             'strategyPrefs': {
                 'generator': create_default_strategy_request('ensemble_weighted'),
                 'ai': create_default_strategy_request('ensemble_weighted'),
                 'backtest': create_default_strategy_request('random_baseline'),
+                'pension720': create_default_pension720_strategy_request('mixed_balance'),
             },
             'strategyPresets': [],
             'alertPrefs': {
@@ -55,6 +62,13 @@ class AppStateStore:
                 'source': 'none',
                 'latestDrawNo': 0,
                 'message': '',
+            },
+            'pension720DataHealth': {
+                'availability': 'none',
+                'source': 'none',
+                'latestDrawNo': 0,
+                'message': '',
+                'updatedAt': '',
             },
             'theme': 'light',
             'windowGeometry': None,
@@ -122,25 +136,31 @@ class AppStateStore:
         state['history'] = self.merge_history_entries([], raw.get('history', []))
         state['ticketBook'] = self.merge_ticket_entries([], raw.get('ticketBook', []))
         state['campaigns'] = [entry for entry in (self.normalize_campaign_entry(item) for item in raw.get('campaigns', [])) if entry]
+        state['pension720Tickets'] = self.merge_pension720_tickets([], raw.get('pension720Tickets', []))
+        state['pension720Campaigns'] = self.merge_pension720_campaigns([], raw.get('pension720Campaigns', []))
         raw_strategy_prefs = raw.get('strategyPrefs')
         raw_alert_prefs = raw.get('alertPrefs')
         raw_sync_meta = raw.get('syncMeta')
         raw_data_health = raw.get('dataHealth')
+        raw_pension720_health = raw.get('pension720DataHealth')
         raw_generator_options = raw.get('generatorOptions')
         incoming_prefs: Dict[str, Any] = raw_strategy_prefs if isinstance(raw_strategy_prefs, dict) else {}
         alert_prefs_raw: Dict[str, Any] = raw_alert_prefs if isinstance(raw_alert_prefs, dict) else {}
         sync_meta_raw: Dict[str, Any] = raw_sync_meta if isinstance(raw_sync_meta, dict) else {}
         data_health_raw: Dict[str, Any] = raw_data_health if isinstance(raw_data_health, dict) else {}
+        pension720_health_raw: Dict[str, Any] = raw_pension720_health if isinstance(raw_pension720_health, dict) else {}
         generator_options_raw: Dict[str, Any] = raw_generator_options if isinstance(raw_generator_options, dict) else {}
         state['strategyPrefs'] = {
             'generator': self.normalize_strategy_request(incoming_prefs.get('generator') or defaults['strategyPrefs']['generator']),
             'ai': self.normalize_strategy_request(incoming_prefs.get('ai') or defaults['strategyPrefs']['ai']),
             'backtest': self.normalize_strategy_request(incoming_prefs.get('backtest') or defaults['strategyPrefs']['backtest']),
+            'pension720': self.normalize_pension720_strategy_request(incoming_prefs.get('pension720') or defaults['strategyPrefs']['pension720']),
         }
         state['strategyPresets'] = [preset for preset in (self.normalize_strategy_preset(item) for item in raw.get('strategyPresets', [])) if preset]
         state['alertPrefs'] = self.normalize_alert_prefs({**defaults['alertPrefs'], **alert_prefs_raw})
         state['syncMeta'] = {**defaults['syncMeta'], **sync_meta_raw}
         state['dataHealth'] = {**defaults['dataHealth'], **data_health_raw}
+        state['pension720DataHealth'] = self.normalize_pension720_data_health({**defaults['pension720DataHealth'], **pension720_health_raw})
         state['theme'] = raw.get('theme') if raw.get('theme') in {'light', 'dark'} else defaults['theme']
         state['windowGeometry'] = raw.get('windowGeometry')
         state['proxyUrl'] = normalize_proxy_url(raw.get('proxyUrl'))[:500]
@@ -368,6 +388,9 @@ class AppStateStore:
             'filters': filters,
         }
 
+    def normalize_pension720_strategy_request(self, raw: Any) -> Dict[str, Any]:
+        return normalize_pension720_request(raw if isinstance(raw, dict) else create_default_pension720_strategy_request('mixed_balance'))
+
     def normalize_filter_pair(self, value: Any, min_value: int, max_value: int) -> Optional[List[int]]:
         if not isinstance(value, (list, tuple)) or len(value) < 2:
             return None
@@ -388,16 +411,31 @@ class AppStateStore:
             return None
         scope = str(raw.get('scope') or '').strip()
         name = str(raw.get('name') or '').strip()
-        if scope not in {'generator', 'ai', 'backtest'} or not name:
+        if scope not in {'generator', 'ai', 'backtest', 'pension720'} or not name:
             return None
+        request = raw.get('request') or raw.get('strategyRequest') or {}
+        normalized_request = self.normalize_pension720_strategy_request(request) if scope == 'pension720' else self.normalize_strategy_request(request)
         return {
             'id': str(raw.get('id') or self.create_id('preset')),
             'scope': scope,
             'name': name[:80],
             'description': str(raw.get('description') or '')[:200],
-            'request': self.normalize_strategy_request(raw.get('request') or raw.get('strategyRequest') or {}),
+            'request': normalized_request,
             'createdAt': str(raw.get('createdAt') or dt.datetime.now().isoformat()),
             'updatedAt': str(raw.get('updatedAt') or dt.datetime.now().isoformat()),
+        }
+
+    def normalize_pension720_data_health(self, raw: Any) -> Dict[str, Any]:
+        defaults = self.create_default_state()['pension720DataHealth']
+        source = raw if isinstance(raw, dict) else {}
+        availability = source.get('availability') if source.get('availability') in {'full', 'none'} else defaults['availability']
+        data_source = source.get('source') if source.get('source') in {'static', 'official', 'official_cache', 'none'} else defaults['source']
+        return {
+            'availability': availability,
+            'source': data_source,
+            'latestDrawNo': max(0, safe_int(source.get('latestDrawNo'), default=0)),
+            'message': str(source.get('message') or defaults['message'])[:240],
+            'updatedAt': str(source.get('updatedAt') or defaults['updatedAt']),
         }
 
     def normalize_ticket_entry(self, raw: Any) -> Optional[Dict[str, Any]]:
@@ -460,6 +498,97 @@ class AppStateStore:
             'createdAt': str(raw.get('createdAt') or dt.datetime.now().isoformat()),
             'memo': str(raw.get('memo') or '')[:200],
         }
+
+    def normalize_record_id(self, value: Any, prefix: str) -> str:
+        text = str(value or '').strip()
+        if re.fullmatch(r'[A-Za-z0-9_-]{1,120}', text):
+            return text
+        return self.create_id(prefix)
+
+    def normalize_pension720_ticket(self, raw: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(raw, dict):
+            return None
+        try:
+            group = int(str(raw.get('group')))
+        except (TypeError, ValueError):
+            return None
+        number = normalize_six_digits(raw.get('number'))
+        if group < 1 or group > 5 or not number:
+            return None
+        target_draw_no = normalize_positive_int(raw.get('targetDrawNo'))
+        source = str(raw.get('source') or 'import')
+        if source not in {'recommendation', 'campaign', 'import'}:
+            source = 'import'
+        try:
+            score = float(raw.get('score') or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        return {
+            'id': self.normalize_record_id(raw.get('id'), 'p720'),
+            'group': group,
+            'number': number['number'],
+            'digits': number['digits'],
+            'source': source,
+            'targetDrawNo': target_draw_no,
+            'campaignId': str(raw.get('campaignId') or '').strip()[:120],
+            'strategyRequest': self.normalize_pension720_strategy_request(raw.get('strategyRequest')) if raw.get('strategyRequest') else None,
+            'score': score,
+            'memo': str(raw.get('memo') or '')[:200],
+            'createdAt': str(raw.get('createdAt') or dt.datetime.now().isoformat()),
+        }
+
+    def build_pension720_ticket_key(self, ticket: Dict[str, Any]) -> str:
+        return '|'.join(
+            [
+                str(ticket.get('group') or 0),
+                str(ticket.get('number') or ''),
+                str(ticket.get('targetDrawNo') or '-'),
+                str(ticket.get('campaignId') or '-'),
+            ]
+        )
+
+    def merge_pension720_tickets(self, existing: Sequence[Any], incoming: Sequence[Any]) -> List[Dict[str, Any]]:
+        by_key: Dict[str, Dict[str, Any]] = {}
+        for item in [*(existing or []), *(incoming or [])]:
+            ticket = self.normalize_pension720_ticket(item)
+            if not ticket:
+                continue
+            key = self.build_pension720_ticket_key(ticket)
+            if key not in by_key:
+                by_key[key] = ticket
+        rows = sorted(by_key.values(), key=lambda item: str(item.get('createdAt') or ''), reverse=True)
+        return rows[: int(APP_CONFIG['MAX_PENSION720_TICKETS'])]
+
+    def normalize_pension720_campaign(self, raw: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(raw, dict):
+            return None
+        start_draw_no = normalize_positive_int(raw.get('startDrawNo'))
+        weeks = normalize_positive_int(raw.get('weeks'))
+        sets_per_draw = normalize_positive_int(raw.get('setsPerDraw') if raw.get('setsPerDraw') is not None else raw.get('setsPerWeek'))
+        if start_draw_no is None or weeks is None or sets_per_draw is None:
+            return None
+        if weeks > int(APP_CONFIG['MAX_CAMPAIGN_WEEKS']) or sets_per_draw > int(APP_CONFIG['MAX_CAMPAIGN_SETS_PER_WEEK']):
+            return None
+        if weeks * sets_per_draw > int(APP_CONFIG['MAX_CAMPAIGN_TOTAL_TICKETS']):
+            return None
+        return {
+            'id': self.normalize_record_id(raw.get('id'), 'p720_campaign'),
+            'name': str(raw.get('name') or 'pension720 campaign')[:80],
+            'startDrawNo': start_draw_no,
+            'weeks': weeks,
+            'setsPerDraw': sets_per_draw,
+            'strategyRequest': self.normalize_pension720_strategy_request(raw.get('strategyRequest')) if raw.get('strategyRequest') else None,
+            'createdAt': str(raw.get('createdAt') or dt.datetime.now().isoformat()),
+            'memo': str(raw.get('memo') or '')[:200],
+        }
+
+    def merge_pension720_campaigns(self, existing: Sequence[Any], incoming: Sequence[Any]) -> List[Dict[str, Any]]:
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for item in [*(incoming or []), *(existing or [])]:
+            campaign = self.normalize_pension720_campaign(item)
+            if campaign and campaign['id'] not in by_id:
+                by_id[campaign['id']] = campaign
+        return sorted(by_id.values(), key=lambda item: str(item.get('createdAt') or ''), reverse=True)
 
     def build_ticket_key(self, ticket: Dict[str, Any]) -> str:
         strategy_snapshot = self.stable_stringify(ticket.get('strategyRequest')) if ticket.get('strategyRequest') else '-'
@@ -680,13 +809,123 @@ class AppStateStore:
         self.save()
         return {'removedCampaigns': removed_campaigns, 'removedTickets': removed_tickets}
 
+    def add_pension720_ticket(self, raw: Dict[str, Any], *, save: bool = True) -> Dict[str, Any]:
+        source = raw or {}
+        ticket = self.normalize_pension720_ticket({**source, 'source': source.get('source') or 'recommendation'})
+        if not ticket:
+            return {'inserted': False, 'duplicate': False, 'ticket': None}
+        key = self.build_pension720_ticket_key(ticket)
+        for current in self.state['pension720Tickets']:
+            if self.build_pension720_ticket_key(current) == key:
+                return {'inserted': False, 'duplicate': True, 'ticket': current}
+        self.state['pension720Tickets'].insert(0, ticket)
+        self.state['pension720Tickets'] = self.state['pension720Tickets'][: int(APP_CONFIG['MAX_PENSION720_TICKETS'])]
+        if save:
+            self.save()
+        return {'inserted': True, 'duplicate': False, 'ticket': ticket}
+
+    def add_pension720_tickets_bulk(self, items: Sequence[Any], *, save: bool = True) -> Dict[str, int]:
+        before = self.merge_pension720_tickets([], self.state['pension720Tickets'])
+        before_keys = {self.build_pension720_ticket_key(item) for item in before}
+        normalized_incoming = [ticket for ticket in (self.normalize_pension720_ticket(item) for item in items or []) if ticket]
+        incoming_keys = {self.build_pension720_ticket_key(item) for item in normalized_incoming}
+        uncapped_by_key: Dict[str, Dict[str, Any]] = {}
+        for item in [*before, *normalized_incoming]:
+            key = self.build_pension720_ticket_key(item)
+            if key not in uncapped_by_key:
+                uncapped_by_key[key] = item
+        uncapped_rows = sorted(uncapped_by_key.values(), key=lambda item: str(item.get('createdAt') or ''), reverse=True)
+        merged = uncapped_rows[: int(APP_CONFIG['MAX_PENSION720_TICKETS'])]
+        after_keys = {self.build_pension720_ticket_key(item) for item in merged}
+        inserted = len([key for key in after_keys if key not in before_keys])
+        duplicate = max(0, len(normalized_incoming) - len(incoming_keys) + len([key for key in incoming_keys if key in before_keys]))
+        truncated = max(0, len(uncapped_rows) - int(APP_CONFIG['MAX_PENSION720_TICKETS']))
+        self.state['pension720Tickets'] = merged
+        if (inserted or duplicate) and save:
+            self.save()
+        return {'inserted': inserted, 'duplicate': duplicate, 'truncated': truncated}
+
+    def remove_pension720_ticket(self, ticket_id: str) -> int:
+        target_id = str(ticket_id or '').strip()
+        before = len(self.state['pension720Tickets'])
+        self.state['pension720Tickets'] = [ticket for ticket in self.state['pension720Tickets'] if ticket.get('id') != target_id]
+        removed = before - len(self.state['pension720Tickets'])
+        if removed:
+            self.prune_pension720_campaigns_without_tickets(save=False)
+            self.save()
+        return removed
+
+    def clear_pension720_tickets(self) -> int:
+        removed = len(self.state['pension720Tickets'])
+        self.state['pension720Tickets'] = []
+        self.state['pension720Campaigns'] = []
+        if removed:
+            self.save()
+        return removed
+
+    def prune_pension720_campaigns_without_tickets(self, *, save: bool = True) -> Dict[str, Any]:
+        linked_ids = {str(ticket.get('campaignId') or '').strip() for ticket in self.state['pension720Tickets'] if ticket.get('campaignId')}
+        kept = []
+        removed = []
+        for campaign in self.state['pension720Campaigns']:
+            campaign_id = str(campaign.get('id') or '').strip()
+            if campaign_id and campaign_id in linked_ids:
+                kept.append(campaign)
+            else:
+                removed.append(campaign)
+        if removed:
+            self.state['pension720Campaigns'] = kept
+            if save:
+                self.save()
+        return {'campaigns': self.state['pension720Campaigns'], 'removed': removed}
+
+    def add_pension720_campaign(self, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        campaign = self.normalize_pension720_campaign(entry)
+        if not campaign:
+            return None
+        self.state['pension720Campaigns'] = self.merge_pension720_campaigns(self.state['pension720Campaigns'], [campaign])
+        self.save()
+        return campaign
+
+    def count_pension720_tickets_by_campaign_id(self, campaign_id: str) -> int:
+        target = str(campaign_id or '').strip()
+        return len([ticket for ticket in self.state['pension720Tickets'] if str(ticket.get('campaignId') or '') == target])
+
+    def remove_pension720_campaign(self, campaign_id: str, *, cascade_tickets: bool = True) -> Dict[str, Any]:
+        target = str(campaign_id or '').strip()
+        before_campaigns = len(self.state['pension720Campaigns'])
+        self.state['pension720Campaigns'] = [campaign for campaign in self.state['pension720Campaigns'] if campaign.get('id') != target]
+        removed_campaign = before_campaigns != len(self.state['pension720Campaigns'])
+        removed_tickets = 0
+        if cascade_tickets:
+            before_tickets = len(self.state['pension720Tickets'])
+            self.state['pension720Tickets'] = [ticket for ticket in self.state['pension720Tickets'] if ticket.get('campaignId') != target]
+            removed_tickets = before_tickets - len(self.state['pension720Tickets'])
+        if removed_campaign or removed_tickets:
+            self.save()
+        return {'removedCampaign': removed_campaign, 'removedTickets': removed_tickets}
+
+    def clear_pension720_campaigns(self, *, cascade_tickets: bool = True) -> Dict[str, int]:
+        campaign_ids = {str(campaign.get('id') or '') for campaign in self.state['pension720Campaigns']}
+        removed_campaigns = len(campaign_ids)
+        removed_tickets = 0
+        self.state['pension720Campaigns'] = []
+        if cascade_tickets and campaign_ids:
+            before_tickets = len(self.state['pension720Tickets'])
+            self.state['pension720Tickets'] = [ticket for ticket in self.state['pension720Tickets'] if str(ticket.get('campaignId') or '') not in campaign_ids]
+            removed_tickets = before_tickets - len(self.state['pension720Tickets'])
+        self.save()
+        return {'removedCampaigns': removed_campaigns, 'removedTickets': removed_tickets}
+
     def set_strategy_pref(self, scope: str, request: Dict[str, Any]) -> None:
-        if scope not in {'generator', 'ai', 'backtest'}:
+        if scope not in {'generator', 'ai', 'backtest', 'pension720'}:
             return
-        self.state['strategyPrefs'][scope] = self.normalize_strategy_request(request)
+        self.state['strategyPrefs'][scope] = self.normalize_pension720_strategy_request(request) if scope == 'pension720' else self.normalize_strategy_request(request)
         self.save()
 
     def get_strategy_pref(self, scope: str) -> Dict[str, Any]:
+        if scope == 'pension720':
+            return self.normalize_pension720_strategy_request(self.state['strategyPrefs'].get(scope))
         return self.normalize_strategy_request(self.state['strategyPrefs'].get(scope))
 
     def save_strategy_preset(self, scope: str, name: str, request: Dict[str, Any], description: str = '') -> Optional[Dict[str, Any]]:
@@ -715,6 +954,10 @@ class AppStateStore:
         self.state['dataHealth'] = {**self.state['dataHealth'], **updates}
         self.save()
 
+    def set_pension720_data_health(self, **updates: Any) -> None:
+        self.state['pension720DataHealth'] = self.normalize_pension720_data_health({**self.state['pension720DataHealth'], **updates})
+        self.save()
+
     def export_backup_payload(self) -> Dict[str, Any]:
         return {
             'app': APP_CONFIG['APP_NAME'],
@@ -727,6 +970,10 @@ class AppStateStore:
         incoming_state = payload.get('state') if isinstance(payload.get('state'), dict) else payload
         if not isinstance(incoming_state, dict):
             raise ValueError('백업 형식이 올바르지 않습니다.')
+        if isinstance(payload.get('settings'), dict):
+            settings = cast(Dict[str, Any], payload.get('settings'))
+            if isinstance(settings.get('strategyPrefs'), dict) and 'strategyPrefs' not in incoming_state:
+                incoming_state = {**incoming_state, 'strategyPrefs': settings['strategyPrefs']}
         normalized = self.merge_state(incoming_state)
         if mode == 'overwrite':
             self.state = normalized
@@ -739,6 +986,11 @@ class AppStateStore:
             for campaign in normalized['campaigns']:
                 if campaign.get('id') not in existing_campaign_ids:
                     self.state['campaigns'].append(campaign)
+            self.state['pension720Tickets'] = self.merge_pension720_tickets(self.state['pension720Tickets'], normalized['pension720Tickets'])
+            existing_p720_campaign_ids = {item.get('id') for item in self.state['pension720Campaigns']}
+            for campaign in normalized['pension720Campaigns']:
+                if campaign.get('id') not in existing_p720_campaign_ids:
+                    self.state['pension720Campaigns'].append(campaign)
             self.state['strategyPrefs'] = normalized['strategyPrefs']
             self.state['strategyPresets'] = normalized['strategyPresets']
             self.state['alertPrefs'] = normalized['alertPrefs']
@@ -747,15 +999,19 @@ class AppStateStore:
             self.state['generatorOptions'] = normalized['generatorOptions']
             self.state['syncMeta'] = normalized['syncMeta']
             self.state['dataHealth'] = normalized['dataHealth']
+            self.state['pension720DataHealth'] = normalized['pension720DataHealth']
         if winning_data:
             self.settle_tickets_if_possible(self.state['ticketBook'], winning_data)
         self.prune_orphan_campaigns(save=False)
+        self.prune_pension720_campaigns_without_tickets(save=False)
         self.save()
         return {
             'favorites': len(self.state['favorites']),
             'history': len(self.state['history']),
             'tickets': self.get_total_ticket_count(),
             'campaigns': len(self.state['campaigns']),
+            'pension720Tickets': len(self.state['pension720Tickets']),
+            'pension720Campaigns': len(self.state['pension720Campaigns']),
         }
 
 

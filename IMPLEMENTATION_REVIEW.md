@@ -4,8 +4,8 @@
 
 ## 상태
 
-- 기준 문서: 2026-04-18 작업 범위
-- 현재 상태: 주요 항목 반영 완료
+- 기준 문서: 2026-04-18 작업 범위 + 2026-05-21 연금복권720+ 이식 범위
+- 현재 상태: 주요 항목 반영 완료, 연금복권720+ 전용 흐름 추가 완료
 - 검증 상태: `pytest`, `pyright`, `compileall`, PyInstaller build 확인 기준으로 관리
 
 ## 반영된 항목
@@ -65,11 +65,27 @@
 - QR 파서는 양수 회차, 1~45 범위, 6개 unique 번호를 강제
 - 성공한 QR payload는 기존 `WinningCheckDialog(qr_payload=...)` 흐름으로 전달
 
+### 9. 연금복권720+ 이식
+
+- 기준 구현은 `lotto---webapp`의 `964ec3a` 최초 Pension720 도입과 `ac4b207` 전략/캠페인 고도화 흐름
+- 기존 데스크톱 이식 패턴은 `21470a4 feat: sync advanced desktop workflows with web app`와 동일하게 core, 상태 저장, PyQt 페이지, 테스트, 문서/spec를 함께 갱신
+- `klotto/core/pension720_strategy_catalog.py`와 `klotto/core/pension720_engine.py`에 전용 전략/필터/추천 엔진 추가
+- 전략: `mixed_balance`, `position_hot`, `trailing_match`, `group_rotation`, `gap_rebound`, `bonus_flow`, `random_baseline`, `diversity`, `consecutive_pattern`
+- `data/pension720_stats.json`은 동행복권 공식 endpoint 기준 315회, 2026-05-14, 2조 537530, 보너스 358127 스냅샷
+- `pension720Tickets`, `pension720Campaigns`, `pension720DataHealth` 상태 키를 로또 `ticketBook`/`dataHealth`와 분리
+- 저장 번호 dedupe key는 `group|number|targetDrawNo|campaignId`, 캠페인 삭제 시 연결 저장 번호 cascade 삭제
+- 백업 import/export는 웹앱 backup v5의 `pension720Tickets`/`pension720Campaigns`를 보존하며 merge
+- `연금복권` 전용 PyQt 페이지는 데이터 상태, 조별/자리별 요약, 추천/전략/프리셋/필터, 캠페인 생성, 저장 번호, 캠페인 목록, 대상 회차 우선 당첨 확인을 포함
+- CSV export는 `group,number,targetDrawNo,campaignId,source,score,memo,createdAt` 형식이며 spreadsheet formula prefix를 escape
+
 ## 관련 파일
 
 - `klotto/core/draws.py`
 - `klotto/core/sync_service.py`
+- `klotto/core/pension720_engine.py`
+- `klotto/core/pension720_strategy_catalog.py`
 - `klotto/data/app_state.py`
+- `klotto/data/pension720.py`
 - `klotto/net/client.py`
 - `klotto/net/http.py`
 - `klotto/ui/main_window/window.py`
@@ -78,15 +94,22 @@
 - `klotto/qr_utils.py`
 - `klottogenerator.spec`
 - `README.md`
+- `data/pension720_stats.json`
+- `scripts/fetch_pension720_stats.py`
 
 ## 검증 체크리스트
 
 - `python -m pytest -q`
-- `pyright`
-- `python -m compileall klotto tests`
+- `pyright --outputjson`
+- `python -m compileall klotto scripts run_klotto.py klottogenerator.py`
+- `python scripts/check_utf8.py`
+- `python scripts/fetch_pension720_stats.py --check`
+- `git diff --check`
 - `pyinstaller klottogenerator.spec`
 
 ## 메모
 
 - Windows onefile 빌드에서 KST 회차 계산이 깨지지 않도록 `.spec`에 `tzdata` bundle 경로를 추가했습니다.
 - tracked 엑셀 파일은 유지하되, 일반 export 산출물은 `.gitignore`로 계속 제외합니다.
+- 연금복권 CSV/백업 산출물은 `lotto_pension_pro_pension720_tickets_*.csv`, `lotto_pension_pro_backup_v*.json` 패턴으로 제외합니다.
+- `data/pension720_stats.json`은 번들 정적 데이터이므로 tracked 상태를 유지하고, `build/`, `dist/`, pytest/cache, runtime CSV/backup/Excel 산출물은 ignore proof로 확인합니다.

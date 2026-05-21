@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 StrategyScope = Literal['generator', 'ai', 'backtest']
 DataHealthAvailability = Literal['full', 'partial', 'none']
 TicketSource = Literal['generator', 'ai', 'import']
+Pension720TicketSource = Literal['recommendation', 'campaign', 'import']
 PayoutMode = Literal['hybrid_dynamic_first', 'fast_fixed']
 
 
@@ -112,6 +113,60 @@ class CampaignEntry:
 
 
 @dataclass(slots=True)
+class Pension720TicketEntry:
+    id: str
+    group: int
+    number: str
+    digits: List[int] = field(default_factory=list)
+    source: Pension720TicketSource = 'import'
+    target_draw_no: Optional[int] = None
+    campaign_id: str = ''
+    strategy_request: Optional[Dict[str, Any]] = None
+    score: float = 0.0
+    memo: str = ''
+    created_at: str = ''
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'group': self.group,
+            'number': self.number,
+            'digits': list(self.digits),
+            'source': self.source,
+            'targetDrawNo': self.target_draw_no,
+            'campaignId': self.campaign_id,
+            'strategyRequest': self.strategy_request,
+            'score': self.score,
+            'memo': self.memo,
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass(slots=True)
+class Pension720CampaignEntry:
+    id: str
+    name: str
+    start_draw_no: int
+    weeks: int
+    sets_per_draw: int
+    strategy_request: Optional[Dict[str, Any]] = None
+    created_at: str = ''
+    memo: str = ''
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'id': self.id,
+            'name': self.name,
+            'startDrawNo': self.start_draw_no,
+            'weeks': self.weeks,
+            'setsPerDraw': self.sets_per_draw,
+            'strategyRequest': self.strategy_request,
+            'createdAt': self.created_at,
+            'memo': self.memo,
+        }
+
+
+@dataclass(slots=True)
 class BacktestComparison:
     strategy_id: str
     payout_mode: str
@@ -205,6 +260,8 @@ class AppState:
     history: List[Dict[str, Any]] = field(default_factory=list)
     ticket_book: List[Dict[str, Any]] = field(default_factory=list)
     campaigns: List[Dict[str, Any]] = field(default_factory=list)
+    pension720_tickets: List[Dict[str, Any]] = field(default_factory=list)
+    pension720_campaigns: List[Dict[str, Any]] = field(default_factory=list)
     strategy_prefs: Dict[str, Any] = field(default_factory=dict)
     strategy_presets: List[Dict[str, Any]] = field(default_factory=list)
     alert_prefs: Dict[str, Any] = field(default_factory=dict)
@@ -221,6 +278,8 @@ class AppState:
             'history': list(self.history),
             'ticketBook': list(self.ticket_book),
             'campaigns': list(self.campaigns),
+            'pension720Tickets': list(self.pension720_tickets),
+            'pension720Campaigns': list(self.pension720_campaigns),
             'strategyPrefs': dict(self.strategy_prefs),
             'strategyPresets': list(self.strategy_presets),
             'alertPrefs': dict(self.alert_prefs),
@@ -239,6 +298,8 @@ __all__ = [
     'BacktestComparison',
     'CampaignEntry',
     'DataHealth',
+    'Pension720CampaignEntry',
+    'Pension720TicketEntry',
     'StrategyFilters',
     'StrategyParams',
     'StrategyRequest',

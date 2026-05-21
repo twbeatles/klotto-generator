@@ -197,7 +197,14 @@ def test_import_backup_restores_sync_meta_and_prunes_orphans(configured_paths: d
         ],
     )
 
-    assert result == {'favorites': 1, 'history': 1, 'tickets': 1, 'campaigns': 1}
+    assert result == {
+        'favorites': 1,
+        'history': 1,
+        'tickets': 1,
+        'campaigns': 1,
+        'pension720Tickets': 0,
+        'pension720Campaigns': 0,
+    }
     assert store.state['syncMeta']['mode'] == 'manual_import'
     assert store.state['syncMeta']['lastSuccessDrawNo'] == 121
     assert store.state['dataHealth']['availability'] == 'partial'
@@ -330,3 +337,61 @@ def test_import_backup_tolerates_malformed_values(configured_paths: dict[str, Pa
     assert store.state['strategyPrefs']['generator']['params']['simulationCount'] == 5000
     assert store.state['generatorOptions']['num_sets'] == 5
     assert store.state['generatorOptions']['check_consecutive'] is False
+
+
+def test_pension720_state_dedupes_campaigns_and_backup_v5(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+    request = store.normalize_pension720_strategy_request(
+        {
+            'strategyId': 'trailing_match',
+            'params': {'seed': 720, 'lookbackWindow': 3, 'candidatePoolSize': 80},
+            'filters': {'groups': [2]},
+        }
+    )
+
+    first = store.add_pension720_ticket({'group': 2, 'number': '060727', 'source': 'recommendation'})
+    duplicate = store.add_pension720_ticket({'group': 2, 'number': '060727', 'source': 'recommendation'})
+    next_draw = store.add_pension720_ticket(
+        {'group': 2, 'number': '060727', 'targetDrawNo': 316, 'source': 'campaign', 'campaignId': 'p720_campaign_a'}
+    )
+    bulk = store.add_pension720_tickets_bulk(
+        [
+            {'group': 1, 'number': '060727', 'source': 'recommendation', 'strategyRequest': request},
+            {'group': 2, 'number': '060727', 'source': 'recommendation', 'strategyRequest': request},
+            {'group': 3, 'number': '060727', 'source': 'recommendation', 'strategyRequest': request},
+        ]
+    )
+
+    assert first['inserted'] is True
+    assert duplicate['duplicate'] is True
+    assert next_draw['inserted'] is True
+    assert bulk['inserted'] == 2
+    assert len(store.state['pension720Tickets']) == 4
+
+    campaign = store.add_pension720_campaign(
+        {'id': 'p720_campaign_a', 'name': '연금 캠페인', 'startDrawNo': 316, 'weeks': 1, 'setsPerDraw': 1}
+    )
+    assert campaign is not None
+    assert store.count_pension720_tickets_by_campaign_id('p720_campaign_a') == 1
+    removed = store.remove_pension720_campaign('p720_campaign_a', cascade_tickets=True)
+    assert removed['removedCampaign'] is True
+    assert removed['removedTickets'] == 1
+
+    payload = {
+        'version': 5,
+        'pension720Tickets': [
+            {'id': 'p720_a', 'group': 2, 'number': '060727', 'targetDrawNo': 316, 'campaignId': 'p720_camp_a'},
+            {'id': 'p720_b', 'group': 2, 'number': '060727', 'targetDrawNo': 316, 'campaignId': 'p720_camp_a'},
+            {'id': 'p720_c', 'group': 2, 'number': '060727', 'targetDrawNo': 317, 'campaignId': 'p720_camp_a'},
+        ],
+        'pension720Campaigns': [
+            {'id': 'p720_camp_a', 'name': '연금 캠페인', 'startDrawNo': 316, 'weeks': 2, 'setsPerDraw': 1}
+        ],
+        'settings': {'strategyPrefs': {'pension720': request}},
+    }
+    result = store.import_backup_payload(payload, mode='overwrite')
+
+    assert result['pension720Tickets'] == 2
+    assert result['pension720Campaigns'] == 1
+    assert store.state['pension720Tickets'][0]['number'] == '060727'
+    assert store.state['strategyPrefs']['pension720']['strategyId'] == 'trailing_match'

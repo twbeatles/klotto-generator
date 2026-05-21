@@ -59,6 +59,7 @@ APP_CONFIG = {
     'HISTORY_FILE': _get_user_data_dir() / "history.json",
     'APP_STATE_FILE': _get_user_data_dir() / "app_state.json",
     'WINNING_STATS_FILE': _get_user_data_dir() / "winning_stats.json",
+    'PENSION720_STATS_FILE': _get_base_path() / "data" / "pension720_stats.json",
     'LOTTO_HISTORY_DB': _get_db_path(),
     'MAX_SETS': 20,
     'MAX_FIXED_NUMS': 6,
@@ -75,6 +76,7 @@ APP_CONFIG = {
     'MAX_CAMPAIGN_WEEKS': 24,
     'MAX_CAMPAIGN_SETS_PER_WEEK': 20,
     'MAX_CAMPAIGN_TOTAL_TICKETS': 300,
+    'MAX_PENSION720_TICKETS': 1000,
     'MAX_STRATEGY_PRESETS': 30,
 }
 
