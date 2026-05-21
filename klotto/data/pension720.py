@@ -15,7 +15,7 @@ PENSION720_OFFICIAL_LIST_URL = 'https://www.dhlottery.co.kr/pt720/selectPstPt720
 
 PENSION720_HEADERS = {
     'Accept': 'application/json',
-    'User-Agent': 'Mozilla/5.0 klotto-generator pension720 sync',
+    'User-Agent': 'Mozilla/5.0 lotto-pension-pro-desktop pension720 sync',
 }
 
 

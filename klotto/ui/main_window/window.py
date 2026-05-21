@@ -1640,7 +1640,9 @@ class DataPage(QWidget):
         return '당첨' if int(checked.get('rank', 0)) > 0 else '미당첨'
 
     def export_backup(self):
-        filepath, _ = QFileDialog.getSaveFileName(self, '백업 저장', 'lotto_app_backup.json', 'JSON 파일 (*.json)')
+        timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+        prefix = str(APP_CONFIG.get('BACKUP_EXPORT_PREFIX') or 'lotto_pension_pro_backup_v5')
+        filepath, _ = QFileDialog.getSaveFileName(self, '백업 저장', f'{prefix}_{timestamp}.json', 'JSON 파일 (*.json)')
         if not filepath:
             return
         payload = self.app_window.store.export_backup_payload()

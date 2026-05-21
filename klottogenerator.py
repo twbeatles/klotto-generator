@@ -1,5 +1,5 @@
 """
-Legacy compatibility wrapper for Lotto Generator Pro.
+Legacy compatibility wrapper for 로또·연금복권 프로.
 
 This module preserves the historical single-file import surface while delegating
 all implementation to the package modules under ``klotto``.

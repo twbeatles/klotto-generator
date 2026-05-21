@@ -1,5 +1,5 @@
 ﻿# -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for Lotto Generator Pro v3.0 (onefile)."""
+"""PyInstaller spec for 로또·연금복권 프로 v3.0 (onefile)."""
 
 import sys
 from importlib.util import find_spec
@@ -10,7 +10,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
 project_path = Path(SPECPATH)
 is_windows = sys.platform.startswith('win')
 
-output_name = 'LottoGeneratorPro_v30'
+output_name = 'LottoPensionPro_v30'
 entry_script = 'run_klotto.py'
 
 exclude_modules = [

@@ -1,6 +1,10 @@
-﻿# Lotto 6/45 & Pension720+ Generator Pro v3.0
+﻿# 로또·연금복권 프로 v3.0
 
-`Lotto Generator Pro`는 PyQt6 기반 데스크톱 복권 도우미입니다. 이번 `v3.0`에서는 참고 웹앱의 상위 기능을 최대한 데스크톱 흐름에 맞게 이식해, 단순 번호 생성기에서 `전략 추천 + 백테스트 + 티켓북/캠페인 + 연금복권720+ + 통합 상태 저장` 앱으로 확장했습니다.
+`로또·연금복권 프로`는 PyQt6 기반 데스크톱 복권 도우미입니다. 이번 `v3.0`에서는 참고 웹앱의 상위 기능을 최대한 데스크톱 흐름에 맞게 이식해, 단순 번호 생성기에서 `전략 추천 + 백테스트 + 티켓북/캠페인 + 연금복권720+ + 통합 상태 저장` 앱으로 확장했습니다.
+
+- app-facing brand: `로또·연금복권 프로`
+- package/repository-facing desktop slug: `lotto-pension-pro-desktop`
+- compatibility package/import surface: `klotto`, `klottogenerator.py`, `run_klotto.py`
 
 ## 핵심 변화
 
@@ -84,7 +88,7 @@
 
 ## 상태 저장과 데이터 정책
 
-앱의 런타임 데이터는 기본적으로 다음 위치에 저장됩니다.
+앱의 런타임 데이터는 기본적으로 다음 위치에 저장됩니다. 새 브랜드에서도 기존 사용자 데이터 호환을 위해 레거시 경로명을 유지합니다.
 
 ```text
 ~/.lotto_generator/
@@ -115,7 +119,7 @@
 
 연금복권 기본 데이터는 `data/pension720_stats.json`에 번들된 동행복권 공식 endpoint 스냅샷을 사용합니다. 구현 기준 스냅샷은 315회, 2026-05-14, 2조 537530, 보너스 358127입니다.
 
-첫 실행 시 레거시 JSON 파일이 있으면 자동으로 흡수하고, 기존 파일은 백업 용도로 그대로 남겨 둡니다. 전체 백업 import/export는 `pension720Tickets`, `pension720Campaigns`, `pension720DataHealth`를 포함하며, 웹앱 backup v5의 같은 키도 손실 없이 merge합니다.
+첫 실행 시 레거시 JSON 파일이 있으면 자동으로 흡수하고, 기존 파일은 백업 용도로 그대로 남겨 둡니다. 전체 백업 import/export는 `pension720Tickets`, `pension720Campaigns`, `pension720DataHealth`를 포함하며, 웹앱 backup v5의 같은 키도 손실 없이 merge합니다. 기본 백업 파일명 prefix는 `lotto_pension_pro_backup_v5`이고, 기존 `lotto_app_backup*.json` 파일도 계속 가져올 수 있습니다.
 
 ## 설치
 
@@ -229,7 +233,7 @@ pyinstaller klottogenerator.spec
 성공하면 결과물은 기본적으로 아래 경로에 생성됩니다.
 
 ```text
-dist/LottoGeneratorPro_v30.exe
+dist/LottoPensionPro_v30.exe
 ```
 
 `klottogenerator.spec`는 다음 사항을 반영합니다.
@@ -255,7 +259,7 @@ GitHub Actions `Repo Health` 워크플로는 아래를 검사합니다.
 ## 프로젝트 구조
 
 ```text
-klotto-generator/
+lotto-pension-pro-desktop/
 ├── klotto/
 │   ├── config.py
 │   ├── main.py
@@ -301,10 +305,18 @@ klotto-generator/
 ## 호환성 메모
 
 - `klottogenerator.py`는 예전 단일 파일 import 표면을 유지하면서 새 모듈들을 재노출합니다.
+- `klotto`, `run_klotto.py`, `klottogenerator.py`, `klottogenerator.spec`는 기존 자동화와 외부 import 호환을 위해 유지합니다.
+- `~/.lotto_generator` 사용자 데이터 경로와 기존 `lotto_app_backup*.json` 백업 import 호환은 유지합니다.
 - 레거시 즐겨찾기/히스토리/설정 JSON import 흐름은 계속 유지됩니다.
 - 브라우저 전용 기능(PWA, service worker, 멀티탭)은 데스크톱용 데이터 게이트/진단 UX로 대체했습니다.
 
 ## 변경 사항 요약
+
+### v3.0 branding sync (2026-05-21)
+- 사용자-facing 제품명을 웹앱과 같은 `로또·연금복권 프로`로 정리
+- 데스크톱 배포 slug를 `lotto-pension-pro-desktop`으로 문서화
+- PyInstaller 산출물명을 `LottoPensionPro_v30.exe`로 변경
+- 기본 전체 백업 파일명 prefix를 `lotto_pension_pro_backup_v5`로 변경하고 기존 백업 호환 유지
 
 ### v3.0 + Pension720+ (2026-05-21)
 - `lotto---webapp`의 Pension720 최초 도입과 전략/캠페인 고도화 흐름을 데스크톱 앱에 포팅

@@ -50,8 +50,10 @@ def _get_user_data_dir() -> Path:
 # 상수 정의
 # ============================================================
 APP_CONFIG = {
-    'APP_NAME': 'Lotto 6/45 Generator Pro',
+    'APP_NAME': '로또·연금복권 프로',
+    'PACKAGE_SLUG': 'lotto-pension-pro-desktop',
     'VERSION': '3.0',
+    'BACKUP_EXPORT_PREFIX': 'lotto_pension_pro_backup_v5',
     'WINDOW_SIZE': (1480, 960),
     'APP_DATA_DIR': _get_user_data_dir(),
     'SETTINGS_FILE': _get_user_data_dir() / "settings.json",

@@ -72,6 +72,16 @@ def test_migrate_legacy_files_into_app_state(configured_paths: dict[str, Path]):
     assert store.add_favorite([1, 2, 3, 4, 5, 6]) is False
 
 
+def test_export_backup_payload_uses_current_app_brand(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+
+    payload = store.export_backup_payload()
+
+    assert payload['app'] == APP_CONFIG['APP_NAME'] == '로또·연금복권 프로'
+    assert payload['version'] == APP_CONFIG['VERSION']
+    assert isinstance(payload['state'], dict)
+
+
 def test_ticket_quantity_merge_and_past_draw_settlement(configured_paths: dict[str, Path]):
     store = AppStateStore(configured_paths['app_state'])
     request = create_default_strategy_request('ensemble_weighted')

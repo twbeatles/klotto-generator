@@ -104,6 +104,7 @@ def test_navigation_and_data_health_gate(qapp: QApplication, monkeypatch: pytest
         expected_latest_draw=4,
     )
     try:
+        assert app.windowTitle() == f"{APP_CONFIG['APP_NAME']} v{APP_CONFIG['VERSION']}"
         assert app.nav_list.count() == 8
         app.nav_list.setCurrentRow(3)
         assert app.stack.currentIndex() == 3
@@ -173,6 +174,37 @@ def test_data_page_remove_and_clear_actions(qapp: QApplication, monkeypatch: pyt
         app.data_page.clear_current_tab()
         assert store.state['ticketBook'] == []
         assert store.state['campaigns'] == []
+    finally:
+        app.close()
+
+
+def test_backup_export_uses_lotto_pension_prefix(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, _store, _fake_stats = _build_app(
+        monkeypatch,
+        tmp_path,
+        [{'draw_no': 1, 'numbers': [1, 2, 3, 4, 5, 6], 'bonus': 7, 'date': '2026-04-01'}],
+        expected_latest_draw=1,
+    )
+    dialog_defaults: list[str] = []
+    exported: list[tuple[dict[str, Any], str]] = []
+
+    def fake_get_save_file_name(_parent, _title, default_name, _filter):
+        dialog_defaults.append(default_name)
+        return str(tmp_path / 'backup.json'), ''
+
+    monkeypatch.setattr(window_module.QFileDialog, 'getSaveFileName', fake_get_save_file_name)
+    monkeypatch.setattr(
+        window_module.DataExporter,
+        'export_any_json',
+        staticmethod(lambda payload, filepath: exported.append((payload, filepath)) or True),
+    )
+    try:
+        app.data_page.export_backup()
+
+        assert dialog_defaults
+        assert dialog_defaults[0].startswith(f"{APP_CONFIG['BACKUP_EXPORT_PREFIX']}_")
+        assert dialog_defaults[0].endswith('.json')
+        assert exported[0][0]['app'] == APP_CONFIG['APP_NAME']
     finally:
         app.close()
 
