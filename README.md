@@ -325,6 +325,16 @@ pyinstaller klottogenerator.spec
 ```
 - 빌드 완료 후 `dist/LottoPensionPro_v30.exe` 파일이 생성됩니다.
 
+### 5. 소스 패키지 구조
+화면·전략·저장소 코드를 역할별 패키지로 나눴습니다. 기존 import 경로(`klotto.core.strategy_engine`, `klotto.data.app_state`, `klotto.ui.main_window`)는 호환 래퍼로 그대로 사용할 수 있습니다.
+
+| 경로 | 역할 |
+|------|------|
+| `klotto/core/strategy/` | 로또 전략 엔진 |
+| `klotto/data/store/` | 통합 상태(`app_state.json`) 저장소 |
+| `klotto/ui/main_window/pages/` | 화면별 페이지 (생성, 통계, AI, 백테스트, 연금복권, 당첨 확인, 데이터, 설정) |
+| `klotto/ui/main_window/task_thread.py` | 번호 생성·동기화 등 백그라운드 작업 스레드 |
+
 ---
 
 ## ❓ 자주 묻는 질문 (FAQ) & 문제 해결

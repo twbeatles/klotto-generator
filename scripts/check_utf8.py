@@ -26,10 +26,14 @@ SKIP_DIRS = {
     ".ruff_cache",
     ".pyright",
     ".venv",
+    ".codegraph",
+    ".worktrees",
     "__pycache__",
     "build",
     "dist",
     "htmlcov",
+    "mcps",
+    "terminals",
     "venv",
 }
 

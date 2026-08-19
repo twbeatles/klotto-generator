@@ -14,6 +14,10 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from klotto.config import APP_CONFIG
 from klotto.data.app_state import AppStateStore
 from klotto.ui.main_window import window as window_module
+from klotto.ui.main_window.pages import check as check_page_module
+from klotto.ui.main_window.pages import data as data_page_module
+from klotto.ui.main_window.pages import number_generation as number_generation_page_module
+from klotto.ui.main_window.pages import pension720 as pension720_page_module
 from klotto.ui.widgets import strategy_editor as strategy_editor_module
 
 
@@ -87,7 +91,7 @@ def _build_app(
     fake_stats = FakeStatsManager(winning_data)
     monkeypatch.setattr(window_module, 'get_shared_store', lambda: store)
     monkeypatch.setattr(window_module, 'WinningStatsManager', lambda: fake_stats)
-    monkeypatch.setattr(window_module, 'WinningInfoWidget', StubWinningInfoWidget)
+    monkeypatch.setattr(number_generation_page_module, 'WinningInfoWidget', StubWinningInfoWidget)
     monkeypatch.setattr(window_module, 'estimate_latest_draw', lambda: expected_latest_draw)
     app = window_module.LottoApp()
     return app, store, fake_stats
@@ -194,7 +198,7 @@ def test_backup_export_uses_lotto_pension_prefix(qapp: QApplication, monkeypatch
 
     monkeypatch.setattr(window_module.QFileDialog, 'getSaveFileName', fake_get_save_file_name)
     monkeypatch.setattr(
-        window_module.DataExporter,
+        data_page_module.DataExporter,
         'export_any_json',
         staticmethod(lambda payload, filepath: exported.append((payload, filepath)) or True),
     )
@@ -544,11 +548,11 @@ def test_qr_scan_and_excel_buttons_call_connected_flows(qapp: QApplication, monk
             return None
 
     import scripts.export_to_excel as excel_module
-    monkeypatch.setattr(window_module, 'QRCodeScannerDialog', FakeScanner)
-    monkeypatch.setattr(window_module, 'WinningCheckDialog', FakeWinningCheckDialog)
+    monkeypatch.setattr(check_page_module, 'QRCodeScannerDialog', FakeScanner)
+    monkeypatch.setattr(check_page_module, 'WinningCheckDialog', FakeWinningCheckDialog)
     monkeypatch.setattr(excel_module, 'ensure_openpyxl', lambda: True)
     monkeypatch.setattr(excel_module, 'export_to_excel', lambda path: excel_paths.append(Path(path)) or True)
-    monkeypatch.setattr(window_module.QFileDialog, 'getSaveFileName', lambda *_args, **_kwargs: (str(tmp_path / 'out.xlsx'), ''))
+    monkeypatch.setattr(data_page_module.QFileDialog, 'getSaveFileName', lambda *_args, **_kwargs: (str(tmp_path / 'out.xlsx'), ''))
     try:
         app.check_page.open_qr_scanner()
         app.data_page.export_winning_excel()
@@ -586,7 +590,7 @@ def test_backtest_strategy_list_refreshes_when_experimental_toggle_changes(qapp:
 
 
 def test_pension720_page_gate_and_recommendation_flow(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setattr(window_module, 'load_pension720_static_data', lambda: [])
+    monkeypatch.setattr(pension720_page_module, 'load_pension720_static_data', lambda: [])
     app, store, _fake_stats = _build_app(
         monkeypatch,
         tmp_path,

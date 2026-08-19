@@ -1,5 +1,6 @@
 from .controls_panel import GenerationControlsPanel
 from .results_panel import ResultsPanel
+from .task_thread import TaskThread
 from .window import LottoApp
 
-__all__ = ["GenerationControlsPanel", "LottoApp", "ResultsPanel"]
+__all__ = ["GenerationControlsPanel", "LottoApp", "ResultsPanel", "TaskThread"]

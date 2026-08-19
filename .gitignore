@@ -50,3 +50,9 @@ data/*.db-journal
 # Packaging / local metadata
 *.egg-info/
 .pyinstaller/
+
+# Local agent / tool dumps (do not commit)
+.codegraph/
+mcps/
+terminals/
+.worktrees/

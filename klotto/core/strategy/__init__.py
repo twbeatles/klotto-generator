@@ -1,9 +1,8 @@
-"""Legacy compatibility wrapper for strategy engine imports."""
+"""Strategy engine package."""
 
-from klotto.core.strategy import (
-    ADAPTIVE_SOURCE_STRATEGIES,
-    FIXED_PRIZE_BY_RANK,
-    StrategyEngine,
+from .constants import ADAPTIVE_SOURCE_STRATEGIES, FIXED_PRIZE_BY_RANK
+from .engine import StrategyEngine
+from .utils import (
     clamp,
     clamp01,
     compute_delta_affinity,
