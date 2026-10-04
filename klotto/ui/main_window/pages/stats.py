@@ -84,9 +84,9 @@ class StatsPage(QWidget):
         self.summary_label = QLabel('통계를 불러오는 중...')
         layout.addWidget(self.summary_label)
         self.hot_table = QTableWidget(0, 2)
-        self.hot_table.setHorizontalHeaderLabels(['핫 넘버', '출현'])
+        self.hot_table.setHorizontalHeaderLabels(['자주 나온 번호', '나온 횟수'])
         self.cold_table = QTableWidget(0, 2)
-        self.cold_table.setHorizontalHeaderLabels(['콜드 넘버', '출현'])
+        self.cold_table.setHorizontalHeaderLabels(['오래 안 나온 번호', '나온 횟수'])
         row = QHBoxLayout()
         row.addWidget(self.hot_table)
         row.addWidget(self.cold_table)
@@ -100,8 +100,9 @@ class StatsPage(QWidget):
         winning_data = self.app_window.stats_manager.winning_data
         total_draws = len(winning_data)
         latest_draw = winning_data[0]['draw_no'] if winning_data else 0
-        health = self.app_window.store.state['dataHealth']
-        self.summary_label.setText(f"총 {total_draws}회차 | 최신 {latest_draw}회 | 데이터 상태: {health.get('availability')} ({health.get('message') or health.get('source')})")
+        availability = str(self.app_window.store.state['dataHealth'].get('availability') or 'none')
+        extra = '' if availability == 'full' else ' · 빠진 회차가 있어요. 설정·최신 정보에서 가져오세요.'
+        self.summary_label.setText(f"총 {total_draws}개 회차 · 최신 {latest_draw}회까지 준비됨{extra}")
         most_common = stats.get('most_common', []) if isinstance(stats, dict) else []
         least_common = stats.get('least_common', []) if isinstance(stats, dict) else []
         self._fill_rank_table(self.hot_table, most_common)

@@ -106,8 +106,8 @@ class ResultRow(QWidget):
             match_label.setToolTip(f"{match_count}개 번호 일치")
             layout.addWidget(match_label)
 
-        copy_btn = QPushButton("📋")
-        copy_btn.setFixedSize(28, 28)
+        copy_btn = QPushButton("복사")
+        copy_btn.setFixedSize(44, 28)
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.setStyleSheet(
             f"""

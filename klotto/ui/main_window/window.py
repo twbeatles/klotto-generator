@@ -72,12 +72,12 @@ class LottoApp(QMainWindow):
         title = QLabel(APP_CONFIG['APP_NAME'])
         title.setFont(QFont('Segoe UI', 18, QFont.Weight.Bold))
         nav_layout.addWidget(title)
-        subtitle = QLabel('Desktop Sync Edition')
+        subtitle = QLabel('당첨 확인부터 번호 추천까지')
         nav_layout.addWidget(subtitle)
         self.nav_list = QListWidget()
-        self.nav_list.addItems(['생성', '당첨 통계', 'AI 추천', '전략 시뮬레이션', '연금복권', '당첨 확인', '데이터 관리', '설정/동기화'])
+        self.nav_list.addItems(['번호 생성', '당첨 통계', 'AI 추천', '지난 결과로 시험', '연금복권', '당첨 확인', '내 번호 관리', '설정·최신 정보'])
         nav_layout.addWidget(self.nav_list, 1)
-        self.theme_toggle_btn = QPushButton('테마 전환')
+        self.theme_toggle_btn = QPushButton('밝기 바꾸기')
         self.theme_toggle_btn.clicked.connect(self.toggle_theme)
         nav_layout.addWidget(self.theme_toggle_btn)
         splitter.addWidget(nav_panel)
@@ -151,13 +151,11 @@ class LottoApp(QMainWindow):
     def can_use_advanced_features(self, *, show_message: bool = False) -> bool:
         allowed = self.is_data_health_full()
         if not allowed and show_message:
-            health = self.store.state.get('dataHealth') or {}
             QMessageBox.information(
                 self,
-                '데이터 상태 필요',
-                'AI 추천과 전략 시뮬레이션은 전체 당첨 이력이 확보된 상태에서만 사용할 수 있습니다.\n\n'
-                f"현재 상태: {health.get('availability')}\n"
-                f"세부 정보: {health.get('message') or health.get('source')}",
+                '먼저 최신 정보를 가져오세요',
+                'AI 추천과 지난 결과 시험은 당첨 정보를 모두 가져온 뒤에 이용할 수 있습니다.\n\n'
+                '설정·최신 정보에서 [최신 정보 가져오기]를 눌러주세요.',
             )
         return allowed
 
@@ -187,9 +185,9 @@ class LottoApp(QMainWindow):
         is_full = latest_draw >= (expected_latest - stale_threshold) and not missing['all']
         availability = 'full' if is_full else 'partial'
         message = (
-            '전체 당첨 이력 확보'
+            '최신 정보까지 모두 준비됨'
             if is_full
-            else f"최근 누락 {len(missing['recent'])}건 / 과거 누락 {len(missing['historical'])}건 / 예상 최신 {expected_latest}회"
+            else f"빠진 회차가 있어요(최근 {len(missing['recent'])}개·이전 {len(missing['historical'])}개). 설정에서 최신 정보를 가져오세요."
         )
         self.store.state['dataHealth'] = {'availability': availability, 'source': 'sqlite_db', 'latestDrawNo': latest_draw, 'message': message}
         self.store.save()
@@ -226,11 +224,11 @@ class LottoApp(QMainWindow):
     def check_ticket(self, ticket: Dict[str, Any]) -> List[Dict[str, Any]]:
         target_draw = self.store.get_winning_draw_by_no(self.stats_manager.winning_data, int(ticket.get('targetDrawNo', 0)))
         if not target_draw:
-            return [{'label': '티켓', 'drawNo': ticket.get('targetDrawNo'), 'matches': 0, 'rank': '-', 'note': '아직 결과 없음'}]
+            return [{'label': '구매한 번호', 'drawNo': ticket.get('targetDrawNo'), 'matches': 0, 'rank': '-', 'note': '아직 결과 없음'}]
         matches = len(set(ticket.get('numbers', [])) & set(target_draw.get('numbers', [])))
         rank = StrategyEngine([]).rank_ticket(ticket.get('numbers', []), target_draw.get('numbers', []), int(target_draw.get('bonus', 0)))
         return [{
-            'label': '티켓',
+            'label': '구매한 번호',
             'drawNo': ticket.get('targetDrawNo'),
             'matches': matches,
             'rank': rank,
@@ -251,7 +249,7 @@ class LottoApp(QMainWindow):
         )
         self._active_sync_worker = worker
         self.settings_page.set_sync_in_progress(True)
-        self.settings_page.append_log('전체 무결성 검사/복구를 시작했습니다.' if normalized_mode == 'full_repair' else '표준 동기화를 시작했습니다.')
+        self.settings_page.append_log('빠진 회차를 처음부터 모두 확인하고 있어요.' if normalized_mode == 'full_repair' else '최신 정보를 가져오기 시작했어요.')
         worker.finished.connect(self._on_sync_finished)
         worker.error.connect(self._on_sync_error)
         worker.progress.connect(self.settings_page.set_sync_progress)
@@ -265,7 +263,7 @@ class LottoApp(QMainWindow):
             worker.cancel()
         except Exception as exc:
             logger.warning('Failed to cancel sync worker: %s', exc)
-        self.settings_page.append_log('동기화 취소를 요청했습니다.')
+        self.settings_page.append_log('가져오기 중단을 요청했어요.')
 
     def _on_sync_finished(self, summary: Dict[str, Any]):
         self._active_sync_worker = None
@@ -313,12 +311,11 @@ class LottoApp(QMainWindow):
         latest = self.get_latest_draw_no()
         sync_meta = dict(self.store.state['syncMeta'])
         sync_meta['mode'] = mode
-        sync_meta['currentSource'] = '전체 무결성 검사/복구' if mode == 'full_repair' else '표준 동기화'
+        sync_meta['currentSource'] = '빠진 회차 모두 채우기' if mode == 'full_repair' else '최신 정보 가져오기'
         failure_message = ', '.join(str(item) for item in failed_draws[:10])
         summary_message = (
-            f"status={final_status}, inserted={inserted}, updated={updated}, unchanged={unchanged}, invalid={invalid}, "
-            f"failed={len(failed_draws)}, settled={settled}, recentMissing={summary.get('recentMissingCount', 0)}, "
-            f"historicalMissing={summary.get('historicalMissingCount', 0)}"
+            f"새로 가져옴 {inserted}개·업데이트 {updated}개·이미 최신 {unchanged}개·"
+            f"실패 {len(failed_draws)}개·구매 목록 확인 {settled}개"
         )
         if final_status == 'success':
             sync_meta['lastSuccessAt'] = now
@@ -357,10 +354,10 @@ class LottoApp(QMainWindow):
             self.show_status(notice, 5000)
 
         status_message = {
-            'success': '당첨 데이터 동기화 완료',
-            'warning': '당첨 데이터 동기화 완료 (부분 실패)',
-            'failure': '당첨 데이터 동기화 실패',
-            'cancelled': '당첨 데이터 동기화 취소',
+            'success': '최신 정보를 모두 가져왔어요',
+            'warning': '최신 정보를 가져왔지만 일부는 실패했어요',
+            'failure': '최신 정보를 가져오지 못했어요',
+            'cancelled': '가져오기를 중단했어요',
         }[final_status]
         self.show_status(status_message, 4000)
 
@@ -374,26 +371,26 @@ class LottoApp(QMainWindow):
         self.store.state['syncMeta'] = {
             **self.store.state['syncMeta'],
             'mode': mode,
-            'currentSource': '전체 무결성 검사/복구' if mode == 'full_repair' else '표준 동기화',
+            'currentSource': '빠진 회차 모두 채우기' if mode == 'full_repair' else '최신 정보 가져오기',
             'lastFailureAt': now,
             'lastFailureMessage': message,
         }
         self.store.save()
-        self.settings_page.append_log(f'동기화 실패: {message}')
-        self.show_status('당첨 데이터 동기화 실패', 4000)
-        QMessageBox.warning(self, '동기화 실패', message)
+        self.settings_page.append_log(f'가져오기 실패: {message}')
+        self.show_status('최신 정보를 가져오지 못했어요', 4000)
+        QMessageBox.warning(self, '가져오기 실패', message)
 
     def save_proxy_url(self, raw_value: str) -> bool:
         raw = str(raw_value or '').strip()
         normalized = normalize_proxy_url(raw)
         if raw and not normalized:
-            self.settings_page.append_log('프록시 저장 실패: http/https URL만 허용됩니다.')
-            self.show_status('프록시 URL이 올바르지 않습니다.', 4000)
+            self.settings_page.append_log('연결 주소 저장 실패: http:// 또는 https://로 시작해야 해요.')
+            self.show_status('연결 주소가 올바르지 않습니다.', 4000)
             return False
         saved = self.store.set_proxy_url(normalized)
         self.settings_page.refresh_status()
-        self.settings_page.append_log(f"프록시 설정 저장: {saved or '사용 안 함'}")
-        self.show_status('프록시 설정을 저장했습니다.', 4000)
+        self.settings_page.append_log(f"연결 주소 저장: {saved or '사용 안 함'}")
+        self.show_status('연결 주소를 저장했습니다.', 4000)
         return True
 
     def update_alert_preferences(self, *, enable_in_app: bool, notify_on_new_result: bool) -> None:
@@ -405,7 +402,7 @@ class LottoApp(QMainWindow):
         )
         self.settings_page.refresh_status()
         self.settings_page.append_log(
-            f"알림 설정 저장: 인앱={updated.get('enableInApp')} / 새 결과 알림={updated.get('notifyOnNewResult')} / 시스템={updated.get('enableSystemNotification')}"
+            f"알림 설정 저장: 앱 알림={'켬' if updated.get('enableInApp') else '끔'} / 새 결과 알림={'켬' if updated.get('notifyOnNewResult') else '끔'}"
         )
         self.show_status('알림 설정을 저장했습니다.', 3000)
 

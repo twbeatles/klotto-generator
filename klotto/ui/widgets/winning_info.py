@@ -237,10 +237,10 @@ class WinningInfoWidget(QWidget):
         cached = self.stats_manager.get_draw_data(draw_no)
         if cached:
             self._render_draw_data(cached)
-            self._set_status("DB 캐시를 표시 중이며 최신 정보를 확인하고 있습니다.", "accent")
+            self._set_status("저장된 정보를 보여주며 최신 정보를 확인하고 있어요.", "accent")
         else:
             self._reset_view()
-            self._set_status("최신 정보를 확인하고 있습니다.", "accent")
+            self._set_status("최신 정보를 확인하고 있어요.", "accent")
 
         self.network_manager.fetch_draw(draw_no, proxy_url=self._proxy_url_getter())
 
@@ -272,18 +272,18 @@ class WinningInfoWidget(QWidget):
         draw_data = self.stats_manager.get_draw_data(normalized["draw_no"]) or normalized
         self._render_draw_data(draw_data)
         self.refresh_btn.setEnabled(True)
-        self._set_status("최신 정보 반영 완료", "accent")
+        self._set_status("최신 정보로 업데이트했어요.", "accent")
         self.dataLoaded.emit(dict(draw_data))
 
     def _on_error(self, error_msg: str):
         self.refresh_btn.setEnabled(True)
 
         if self.current_data is not None:
-            self._set_status(f"네트워크 오류로 캐시를 유지합니다. ({error_msg})", "danger")
+            self._set_status(f"인터넷 연결이 원활하지 않아 저장된 정보를 보여줘요. ({error_msg})", "danger")
             return
 
         self._reset_view()
-        self._set_status(f"네트워크 오류: {error_msg}", "danger")
+        self._set_status(f"인터넷 연결을 확인해주세요. ({error_msg})", "danger")
 
     def get_winning_numbers(self) -> Tuple[List[int], int]:
         if not self.current_data:

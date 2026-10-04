@@ -84,22 +84,22 @@ class CheckPage(QWidget):
         controls = QHBoxLayout()
         self.source_list = QListWidget()
         self.source_list.currentRowChanged.connect(self.refresh_items)
-        self.source_list.addItems(['즐겨찾기', '히스토리', '티켓북'])
+        self.source_list.addItems(['즐겨찾기', '만든 기록', '구매 목록'])
         controls.addWidget(self.source_list, 1)
         self.item_list = QListWidget()
         controls.addWidget(self.item_list, 2)
         layout.addLayout(controls)
         button_row = QHBoxLayout()
-        self.check_btn = QPushButton('당첨 확인')
+        self.check_btn = QPushButton('당첨 확인하기')
         self.check_btn.clicked.connect(self.run_check)
         button_row.addWidget(self.check_btn)
-        self.qr_scan_btn = QPushButton('QR 스캔')
+        self.qr_scan_btn = QPushButton('QR로 확인하기')
         self.qr_scan_btn.clicked.connect(self.open_qr_scanner)
         button_row.addWidget(self.qr_scan_btn)
         button_row.addStretch()
         layout.addLayout(button_row)
         self.results_table = QTableWidget(0, 5)
-        self.results_table.setHorizontalHeaderLabels(['설명', '회차', '일치', '순위', '비고'])
+        self.results_table.setHorizontalHeaderLabels(['내용', '회차', '맞은 개수', '결과', '당첨 번호'])
         layout.addWidget(self.results_table, 1)
         self.source_list.setCurrentRow(0)
 
@@ -150,7 +150,7 @@ class CheckPage(QWidget):
             return
         payload = scanner.scanned_data
         if not payload:
-            QMessageBox.warning(self, 'QR 스캔', '스캔된 QR 데이터가 없습니다.')
+            QMessageBox.warning(self, 'QR 확인', '읽어온 QR 정보가 없습니다.')
             return
         dialog = WinningCheckDialog(
             self.app_window.favorites_manager,

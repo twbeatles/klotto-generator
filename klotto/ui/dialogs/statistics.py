@@ -11,7 +11,7 @@ class StatisticsDialog(QDialog):
     def __init__(self, history_manager, parent=None):
         super().__init__(parent)
         self.history_manager = history_manager
-        self.setWindowTitle("📊 번호 통계")
+        self.setWindowTitle("번호 통계")
         self.setMinimumSize(500, 450)
         self._setup_ui()
         self._apply_theme()
@@ -44,7 +44,7 @@ class StatisticsDialog(QDialog):
             total_label.setStyleSheet(f"color: {theme['text_secondary']}; font-size: 14px;")
             layout.addWidget(total_label)
 
-            most_group = QGroupBox("🔥 가장 많이 선택된 번호")
+            most_group = QGroupBox("가장 많이 고른 번호")
             most_layout = QHBoxLayout(most_group)
             most_layout.setSpacing(5)
             for num, count in stats["most_common"][:7]:
@@ -55,7 +55,7 @@ class StatisticsDialog(QDialog):
             most_layout.addStretch()
             layout.addWidget(most_group)
 
-            least_group = QGroupBox("❄️ 가장 적게 선택된 번호")
+            least_group = QGroupBox("가장 적게 고른 번호")
             least_layout = QHBoxLayout(least_group)
             least_layout.setSpacing(5)
             for num, count in stats["least_common"][:7]:
@@ -66,7 +66,7 @@ class StatisticsDialog(QDialog):
             least_layout.addStretch()
             layout.addWidget(least_group)
 
-            range_group = QGroupBox("📈 번호대별 분포")
+            range_group = QGroupBox("번호대별 분포")
             range_layout = QGridLayout(range_group)
 
             range_counts = {label: 0 for label in ["1-10", "11-20", "21-30", "31-40", "41-45"]}

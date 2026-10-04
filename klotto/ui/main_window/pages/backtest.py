@@ -83,34 +83,34 @@ class BacktestPage(QWidget):
         self._task: Optional[TaskThread] = None
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        self.strategy_editor = StrategyRequestEditor('backtest', '전략 기준값', store=self.app_window.store)
+        self.strategy_editor = StrategyRequestEditor('backtest', '시험에 쓸 기준 방식', store=self.app_window.store)
         self.strategy_editor.strategiesChanged.connect(lambda: self._populate_strategy_list(self._selected_strategy_ids()))
         self.strategy_editor.presetApplied.connect(self._on_preset_applied)
         top.addWidget(self.strategy_editor, 2)
 
-        side = QGroupBox('백테스트 실행')
+        side = QGroupBox('지난 결과로 시험하기')
         side_form = QFormLayout(side)
         self.start_draw_spin = QSpinBox()
         self.start_draw_spin.setRange(1, 9999)
         side_form.addRow('시작 회차', self.start_draw_spin)
         self.end_draw_spin = QSpinBox()
         self.end_draw_spin.setRange(1, 9999)
-        side_form.addRow('종료 회차', self.end_draw_spin)
+        side_form.addRow('마지막 회차', self.end_draw_spin)
         self.qty_spin = QSpinBox()
         self.qty_spin.setRange(1, 20)
         self.qty_spin.setValue(5)
-        side_form.addRow('회차당 티켓 수', self.qty_spin)
+        side_form.addRow('회차마다 살 개수', self.qty_spin)
         self.strategy_list = QListWidget()
         self.strategy_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        side_form.addRow('비교 전략', self.strategy_list)
-        self.run_btn = QPushButton('시뮬레이션 실행')
+        side_form.addRow('비교할 방식', self.strategy_list)
+        self.run_btn = QPushButton('시험 시작')
         self.run_btn.clicked.connect(self.run_backtest)
         side_form.addRow(self.run_btn)
         top.addWidget(side, 1)
         layout.addLayout(top)
 
         self.result_table = QTableWidget(0, 7)
-        self.result_table.setHorizontalHeaderLabels(['전략', 'ROI', '적중률', '회차', '티켓', '총상금', '총비용'])
+        self.result_table.setHorizontalHeaderLabels(['방식', '수익률', '맞힌 비율', '쓴 회차', '산 개수', '받은 상금', '쓴 금액'])
         layout.addWidget(self.result_table, 1)
         self.hydrate_defaults()
 
@@ -163,12 +163,10 @@ class BacktestPage(QWidget):
 
     def update_data_gate(self):
         allowed = self.app_window.is_data_health_full()
-        health = self.app_window.store.state.get('dataHealth') or {}
-        reason = str(health.get('message') or health.get('source') or '당첨 데이터 상태를 확인해 주세요.')
         self.strategy_editor.setEnabled(allowed)
         self.strategy_list.setEnabled(allowed)
         self.run_btn.setEnabled(allowed)
-        self.run_btn.setToolTip('' if allowed else f'전략 시뮬레이션은 full 데이터 상태에서만 사용할 수 있습니다. {reason}')
+        self.run_btn.setToolTip('' if allowed else '당첨 정보를 모두 가져온 뒤에 이용할 수 있어요. 설정·최신 정보에서 최신 정보를 가져오세요.')
 
     def run_backtest(self):
         if not self.app_window.can_use_advanced_features(show_message=True):
@@ -197,7 +195,7 @@ class BacktestPage(QWidget):
         thread = TaskThread(task, self)
         self._task = thread
         thread.resultReady.connect(self._on_backtest_ready)
-        thread.errorOccurred.connect(lambda message: QMessageBox.warning(self, '백테스트 실패', message))
+        thread.errorOccurred.connect(lambda message: QMessageBox.warning(self, '시험 실패', message))
         thread.finished.connect(lambda: self.run_btn.setEnabled(True))
         thread.start()
 
@@ -213,6 +211,6 @@ class BacktestPage(QWidget):
             self.result_table.setItem(row, 4, QTableWidgetItem(str(row_data.get('tickets', 0))))
             self.result_table.setItem(row, 5, QTableWidgetItem(f"{int(row_data.get('totalPrize', 0)):,}"))
             self.result_table.setItem(row, 6, QTableWidgetItem(f"{int(row_data.get('cost', 0)):,}"))
-        self.app_window.show_status('백테스트가 완료되었습니다.', 4000)
+        self.app_window.show_status('지난 결과 시험이 끝났어요.', 4000)
 
 

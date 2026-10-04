@@ -88,17 +88,17 @@ def validate_generation_constraints(
     exclude_set = set(exclude_nums)
 
     if len(fixed_set) > max_fixed_nums:
-        return f"고정수는 최대 {max_fixed_nums}개까지 지정할 수 있습니다."
+        return f"꼭 넣을 번호는 최대 {max_fixed_nums}개까지 지정할 수 있습니다."
 
     overlap = fixed_set & exclude_set
     if overlap:
         conflict = ", ".join(str(number) for number in sorted(overlap))
-        return f"고정수와 제외수가 겹칩니다: {conflict}"
+        return f"꼭 넣을 번호와 빼고 싶은 번호가 겹칩니다: {conflict}"
 
     available = set(range(1, 46)) - fixed_set - exclude_set
     required = 6 - len(fixed_set)
     if len(available) < required:
-        return "고정수/제외수 조건으로는 6개 번호를 만들 수 없습니다."
+        return "지금 조건으로는 6개 번호를 만들 수 없습니다. 빼고 싶은 번호를 줄여보세요."
 
     return None
 
@@ -117,7 +117,7 @@ def validate_balance_constraints(
     required = total_numbers - len(fixed_set)
 
     if required < 0:
-        return "고정수 개수가 전체 번호 개수를 초과했습니다."
+        return "꼭 넣을 번호가 6개를 넘었습니다."
 
     fixed_odd_count = sum(1 for number in fixed_set if number % 2 == 1)
     available_odd_count = sum(1 for number in available if number % 2 == 1)
@@ -127,7 +127,7 @@ def validate_balance_constraints(
     max_possible_odd = fixed_odd_count + min(required, available_odd_count)
 
     if min_possible_odd > max_odd_count or max_possible_odd < min_odd_count:
-        return "현재 고정수/제외수 조건으로는 홀짝 균형(홀수 2~4개)을 만족할 수 없습니다."
+        return "지금 조건으로는 홀짝 균형(홀수 2~4개)을 맞출 수 없습니다."
 
     return None
 

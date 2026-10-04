@@ -34,7 +34,7 @@ class ExportImportDialog(QDialog):
         self.favorites_manager = favorites_manager
         self.history_manager = history_manager
         self.stats_manager = stats_manager
-        self.setWindowTitle("📁 데이터 내보내기/가져오기")
+        self.setWindowTitle("파일로 저장·불러오기")
         self.setMinimumSize(450, 350)
         self._setup_ui()
         self._apply_theme()
@@ -46,13 +46,13 @@ class ExportImportDialog(QDialog):
 
         theme = ThemeManager.get_theme()
 
-        export_group = QGroupBox("📤 내보내기")
+        export_group = QGroupBox("파일로 저장")
         export_layout = QVBoxLayout(export_group)
 
         data_layout = QHBoxLayout()
         data_layout.addWidget(QLabel("데이터 선택:"))
         self.data_combo = QComboBox()
-        self.data_combo.addItems(["즐겨찾기", "히스토리", "당첨 통계"])
+        self.data_combo.addItems(["즐겨찾기", "만든 기록", "당첨 정보"])
         data_layout.addWidget(self.data_combo)
         data_layout.addStretch()
         export_layout.addLayout(data_layout)
@@ -65,28 +65,28 @@ class ExportImportDialog(QDialog):
         format_layout.addStretch()
         export_layout.addLayout(format_layout)
 
-        export_btn = QPushButton("💾 내보내기")
+        export_btn = QPushButton("저장하기")
         export_btn.clicked.connect(self._export_data)
         export_layout.addWidget(export_btn)
 
         layout.addWidget(export_group)
 
-        import_group = QGroupBox("📥 가져오기")
+        import_group = QGroupBox("불러오기")
         import_layout = QVBoxLayout(import_group)
 
-        import_desc = QLabel("JSON 파일에서 데이터를 가져옵니다.\n기존 데이터에 병합됩니다.")
+        import_desc = QLabel("예전에 저장한 파일에서 목록을 가져옵니다.\n기존 목록에 합쳐집니다.")
         import_desc.setStyleSheet(f"color: {theme['text_muted']}; font-size: 12px;")
         import_layout.addWidget(import_desc)
 
         import_target_layout = QHBoxLayout()
         import_target_layout.addWidget(QLabel("가져오기 대상:"))
         self.import_combo = QComboBox()
-        self.import_combo.addItems(["즐겨찾기", "히스토리", "당첨 통계"])
+        self.import_combo.addItems(["즐겨찾기", "만든 기록", "당첨 정보"])
         import_target_layout.addWidget(self.import_combo)
         import_target_layout.addStretch()
         import_layout.addLayout(import_target_layout)
 
-        import_btn = QPushButton("📂 파일 선택 및 가져오기")
+        import_btn = QPushButton("파일 선택해서 불러오기")
         import_btn.clicked.connect(self._import_data)
         import_layout.addWidget(import_btn)
 
@@ -136,9 +136,9 @@ class ExportImportDialog(QDialog):
             success = DataExporter.export_to_json(data, filepath)
 
         if success:
-            QMessageBox.information(self, "완료", f"{len(data)}개 항목이 저장되었습니다.\n{filepath}")
+            QMessageBox.information(self, "완료", f"{len(data)}개를 파일로 저장했어요.\n{filepath}")
         else:
-            QMessageBox.warning(self, "오류", "내보내기에 실패했습니다.")
+            QMessageBox.warning(self, "오류", "파일 저장에 실패했습니다.")
 
     def _import_data(self):
         filepath, _ = QFileDialog.getOpenFileName(self, "가져오기", "", "JSON 파일 (*.json)")
@@ -150,7 +150,7 @@ class ExportImportDialog(QDialog):
             QMessageBox.warning(self, "오류", "파일을 읽는데 실패했습니다.")
             return
         if not isinstance(data, list):
-            QMessageBox.warning(self, "오류", "올바른 JSON 배열 형식이 아닙니다.")
+            QMessageBox.warning(self, "오류", "이 파일은 불러올 수 있는 형식이 아닙니다.")
             return
 
         target_idx = self.import_combo.currentIndex()

@@ -105,51 +105,51 @@ class NumberGenerationPage(QWidget):
         layout.addWidget(header)
 
         top = QHBoxLayout()
-        self.strategy_editor = StrategyRequestEditor(self.scope, '전략 / 필터', store=self.app_window.store)
+        self.strategy_editor = StrategyRequestEditor(self.scope, '번호 만드는 방식', store=self.app_window.store)
         self.strategy_editor.presetApplied.connect(self._on_preset_applied)
         top.addWidget(self.strategy_editor, 2)
 
-        side = QGroupBox('실행 옵션')
+        side = QGroupBox('만들기 설정')
         side_form = QFormLayout(side)
         self.set_count_spin = QSpinBox()
         self.set_count_spin.setRange(1, APP_CONFIG['MAX_SETS'])
         self.set_count_spin.setValue(5)
-        side_form.addRow('세트 수', self.set_count_spin)
+        side_form.addRow('만들 개수', self.set_count_spin)
 
         self.fixed_input = QTextEdit()
-        self.fixed_input.setPlaceholderText('예: 1, 3, 5-8')
+        self.fixed_input.setPlaceholderText('꼭 넣을 번호 (예: 1, 3, 5-8)')
         self.fixed_input.setFixedHeight(56)
-        side_form.addRow('고정수', self.fixed_input)
+        side_form.addRow('꼭 넣을 번호', self.fixed_input)
 
         self.exclude_input = QTextEdit()
-        self.exclude_input.setPlaceholderText('예: 7-10, 22')
+        self.exclude_input.setPlaceholderText('빼고 싶은 번호 (예: 7-10, 22)')
         self.exclude_input.setFixedHeight(56)
-        side_form.addRow('제외수', self.exclude_input)
+        side_form.addRow('빼고 싶은 번호', self.exclude_input)
 
         self.target_draw_spin = QSpinBox()
         self.target_draw_spin.setRange(1, 9999)
-        side_form.addRow('대상 회차', self.target_draw_spin)
+        side_form.addRow('구매할 회차', self.target_draw_spin)
 
-        self.generate_btn = QPushButton('번호 생성' if self.scope == 'generator' else '추천 실행')
+        self.generate_btn = QPushButton('번호 생성' if self.scope == 'generator' else '추천받기')
         self.generate_btn.clicked.connect(self.run_generation)
         side_form.addRow(self.generate_btn)
 
         if self.enable_campaign:
             self.campaign_start_spin = QSpinBox()
             self.campaign_start_spin.setRange(1, 9999)
-            side_form.addRow('캠페인 시작', self.campaign_start_spin)
+            side_form.addRow('시작 회차', self.campaign_start_spin)
 
             self.campaign_weeks_spin = QSpinBox()
             self.campaign_weeks_spin.setRange(1, APP_CONFIG['MAX_CAMPAIGN_WEEKS'])
             self.campaign_weeks_spin.setValue(4)
-            side_form.addRow('캠페인 주차', self.campaign_weeks_spin)
+            side_form.addRow('이어서 할 주 수', self.campaign_weeks_spin)
 
             self.campaign_sets_spin = QSpinBox()
             self.campaign_sets_spin.setRange(1, APP_CONFIG['MAX_CAMPAIGN_SETS_PER_WEEK'])
             self.campaign_sets_spin.setValue(3)
-            side_form.addRow('주당 세트', self.campaign_sets_spin)
+            side_form.addRow('주마다 개수', self.campaign_sets_spin)
 
-            self.campaign_btn = QPushButton('캠페인 생성')
+            self.campaign_btn = QPushButton('묶음으로 만들기')
             self.campaign_btn.clicked.connect(self.run_campaign_generation)
             side_form.addRow(self.campaign_btn)
 
@@ -157,7 +157,7 @@ class NumberGenerationPage(QWidget):
         layout.addLayout(top)
 
         self.results_table = QTableWidget(0, 5)
-        self.results_table.setHorizontalHeaderLabels(['#', '번호', '점수', '합계', '설명'])
+        self.results_table.setHorizontalHeaderLabels(['순서', '번호', '추천도', '번호 합', '한눈에 보기'])
         vertical_header = self.results_table.verticalHeader()
         if vertical_header is not None:
             vertical_header.setVisible(False)
@@ -166,15 +166,15 @@ class NumberGenerationPage(QWidget):
         layout.addWidget(self.results_table, 1)
 
         actions = QHBoxLayout()
-        self.save_history_btn = QPushButton('히스토리 저장')
+        self.save_history_btn = QPushButton('기록에 저장')
         self.save_history_btn.clicked.connect(self.save_all_history)
         actions.addWidget(self.save_history_btn)
 
-        self.add_favorites_btn = QPushButton('선택 즐겨찾기')
+        self.add_favorites_btn = QPushButton('고른 번호 즐겨찾기')
         self.add_favorites_btn.clicked.connect(self.add_selected_to_favorites)
         actions.addWidget(self.add_favorites_btn)
 
-        self.add_tickets_btn = QPushButton('전체 티켓북 추가')
+        self.add_tickets_btn = QPushButton('구매 목록에 담기')
         self.add_tickets_btn.clicked.connect(self.add_all_to_tickets)
         actions.addWidget(self.add_tickets_btn)
         actions.addStretch()
@@ -235,20 +235,19 @@ class NumberGenerationPage(QWidget):
         health = self.app_window.store.state.get('dataHealth') or {}
         availability = str(health.get('availability') or 'none')
         blocked = self.scope == 'ai' and availability != 'full'
-        reason = str(health.get('message') or health.get('source') or '당첨 데이터 상태를 확인해 주세요.')
 
         self.strategy_editor.setEnabled(not blocked)
         self.generate_btn.setEnabled(not blocked)
         self.generate_btn.setToolTip('')
         if blocked:
-            self.generate_btn.setToolTip(f'AI 추천은 full 데이터 상태에서만 사용할 수 있습니다. 현재 상태: {availability} / {reason}')
+            self.generate_btn.setToolTip('당첨 정보를 모두 가져온 뒤에 이용할 수 있어요. 설정·최신 정보에서 최신 정보를 가져오세요.')
         if self.enable_campaign:
             self.campaign_btn.setEnabled(not blocked)
             self.campaign_btn.setToolTip(self.generate_btn.toolTip())
 
     def _parse_fixed_exclude(self) -> tuple[List[int], List[int]]:
-        fixed = sorted(parse_number_expression(self.fixed_input.toPlainText(), '고정수'))
-        exclude = sorted(parse_number_expression(self.exclude_input.toPlainText(), '제외수'))
+        fixed = sorted(parse_number_expression(self.fixed_input.toPlainText(), '꼭 넣을 번호'))
+        exclude = sorted(parse_number_expression(self.exclude_input.toPlainText(), '빼고 싶은 번호'))
         validation_error = validate_generation_constraints(
             fixed,
             exclude,
@@ -332,7 +331,7 @@ class NumberGenerationPage(QWidget):
                         'source': self.scope,
                         'strategyRequest': runtime_request,
                         'campaignId': '',
-                        'memo': f'{start_draw}회 시작 {weeks}주 캠페인',
+                        'memo': f'{start_draw}회 시작 {weeks}주 묶음',
                         'quantity': 1,
                     })
             return {'tickets': tickets, 'startDrawNo': start_draw, 'weeks': weeks, 'setsPerWeek': sets_per_week, 'request': request}
@@ -362,7 +361,7 @@ class NumberGenerationPage(QWidget):
 
     def _on_task_error(self, message: str):
         self._set_busy(False)
-        QMessageBox.warning(self, '작업 실패', message)
+        QMessageBox.warning(self, '만들기 실패', message)
 
     def _on_generated(self, rows: List[Dict[str, Any]]):
         self.generated_rows = rows
@@ -372,21 +371,21 @@ class NumberGenerationPage(QWidget):
             self.results_table.insertRow(current)
             self.results_table.setItem(current, 0, QTableWidgetItem(str(index)))
             self.results_table.setItem(current, 1, QTableWidgetItem(', '.join(str(value) for value in row['numbers'])))
-            self.results_table.setItem(current, 2, QTableWidgetItem(f"{row['score']:.4f}"))
+            self.results_table.setItem(current, 2, QTableWidgetItem(f"{int(round(float(row['score']) * 100))}점"))
             self.results_table.setItem(current, 3, QTableWidgetItem(str(row['sum'])))
             self.results_table.setItem(current, 4, QTableWidgetItem(self._format_explanation(row['explanation'])))
         requested = self._last_requested_count or len(rows)
         if len(rows) < requested:
             self.app_window.show_status(
-                f'{len(rows)}개 세트 생성 (요청 {requested}개 중 일부만 조건 충족 — 필터를 완화해 보세요).', 6000
+                f'{len(rows)}개 번호 완성 (요청 {requested}개 중 일부만 조건에 맞음 — 조건을 조금만 완화해 보세요).', 6000
             )
         else:
-            self.app_window.show_status(f'{len(rows)}개 세트를 생성했습니다.', 4000)
+            self.app_window.show_status(f'{len(rows)}개 번호를 만들었어요.', 4000)
 
     def _on_campaign_generated(self, payload: Dict[str, Any]):
         tickets = payload['tickets']
         if not tickets:
-            QMessageBox.information(self, '캠페인', '생성된 티켓이 없습니다.')
+            QMessageBox.information(self, '묶음 구매', '만들어진 번호가 없습니다.')
             return
         campaign_id = self.app_window.store.create_id('campaign')
         for ticket in tickets:
@@ -401,19 +400,31 @@ class NumberGenerationPage(QWidget):
         }
         size_error = campaign_size_error(payload['weeks'], payload['setsPerWeek'])
         if size_error or self.app_window.store.normalize_campaign_entry(campaign) is None:
-            QMessageBox.warning(self, '캠페인', size_error or '캠페인 정보를 저장할 수 없어 티켓을 저장하지 않았습니다.')
+            QMessageBox.warning(self, '묶음 구매', size_error or '묶음 정보를 저장할 수 없어 번호를 저장하지 않았습니다.')
             return
         self.app_window.store.add_tickets_bulk(tickets, winning_data=self.app_window.stats_manager.winning_data)
         self.app_window.store.add_campaign(campaign)
         self.app_window.refresh_all_views()
-        QMessageBox.information(self, '캠페인 완료', f"티켓 {len(tickets)}개와 캠페인을 저장했습니다.")
+        QMessageBox.information(self, '묶음 저장 완료', f"묶음 번호 {len(tickets)}개를 저장했습니다.")
+
+    @staticmethod
+    def _level(value: Any) -> str:
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            return '보통'
+        if score >= 0.66:
+            return '높음'
+        if score >= 0.33:
+            return '보통'
+        return '낮음'
 
     def _format_explanation(self, explanation: Dict[str, Any]) -> str:
         summary = explanation.get('summary', {}) if isinstance(explanation, dict) else {}
-        pair = summary.get('pairSynergy', 0)
-        profile = summary.get('profileScore', 0)
-        gap = summary.get('gapBalanceScore', 0)
-        return f'페어 {pair:.3f} / 프로파일 {profile:.3f} / 공백 {gap:.3f}'
+        pair = self._level(summary.get('pairSynergy', 0))
+        profile = self._level(summary.get('profileScore', 0))
+        gap = self._level(summary.get('gapBalanceScore', 0))
+        return f'함께 잘 나옴 {pair} · 고른 정도 {profile} · 간격 {gap}'
 
     def _selected_rows(self) -> List[Dict[str, Any]]:
         indexes = sorted({item.row() for item in self.results_table.selectedItems()})
@@ -427,7 +438,7 @@ class NumberGenerationPage(QWidget):
         entries = [{'numbers': row['numbers'], 'date': dt.datetime.now().isoformat()} for row in self.generated_rows]
         self.app_window.store.add_history_many(entries)
         self.app_window.refresh_all_views()
-        self.app_window.show_status('생성 결과를 히스토리에 저장했습니다.', 4000)
+        self.app_window.show_status('만든 번호를 기록에 저장했어요.', 4000)
 
     def add_selected_to_favorites(self):
         rows = self._selected_rows()
@@ -438,7 +449,7 @@ class NumberGenerationPage(QWidget):
         if added:
             self.app_window.store.save()
         self.app_window.refresh_all_views()
-        self.app_window.show_status(f'즐겨찾기 {added}개 추가', 4000)
+        self.app_window.show_status(f'즐겨찾기에 {added}개를 담았어요', 4000)
 
     def add_all_to_tickets(self):
         if not self.generated_rows:
@@ -457,6 +468,6 @@ class NumberGenerationPage(QWidget):
         ]
         self.app_window.store.add_tickets_bulk(tickets, winning_data=self.app_window.stats_manager.winning_data)
         self.app_window.refresh_all_views()
-        self.app_window.show_status(f'티켓북에 {len(tickets)}개 추가', 4000)
+        self.app_window.show_status(f'구매 목록에 {len(tickets)}개를 담았어요', 4000)
 
 

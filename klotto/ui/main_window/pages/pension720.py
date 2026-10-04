@@ -97,12 +97,12 @@ class Pension720Page(QWidget):
         header.setFont(QFont('Segoe UI', 16, QFont.Weight.Bold))
         layout.addWidget(header)
 
-        status_group = QGroupBox('데이터 상태')
+        status_group = QGroupBox('연금복권 당첨 정보')
         status_layout = QVBoxLayout(status_group)
         status_row = QHBoxLayout()
-        self.status_label = QLabel('연금복권 데이터를 확인하는 중...')
+        self.status_label = QLabel('연금복권 정보를 확인하는 중...')
         self.latest_label = QLabel('-')
-        self.refresh_btn = QPushButton('최신 데이터 확인')
+        self.refresh_btn = QPushButton('최신 정보 확인')
         self.refresh_btn.clicked.connect(self.refresh_official_data)
         status_row.addWidget(self.status_label, 2)
         status_row.addWidget(self.latest_label, 1)
@@ -110,16 +110,16 @@ class Pension720Page(QWidget):
         status_layout.addLayout(status_row)
         stats_row = QHBoxLayout()
         self.group_stats_table = QTableWidget(0, 3)
-        self.group_stats_table.setHorizontalHeaderLabels(['조', '출현', '점수'])
+        self.group_stats_table.setHorizontalHeaderLabels(['조', '나온 횟수', '흐름'])
         self.digit_stats_table = QTableWidget(0, 4)
-        self.digit_stats_table.setHorizontalHeaderLabels(['자리', '1위', '2위', '3위'])
+        self.digit_stats_table.setHorizontalHeaderLabels(['자리', '1순위', '2순위', '3순위'])
         stats_row.addWidget(self.group_stats_table)
         stats_row.addWidget(self.digit_stats_table)
         status_layout.addLayout(stats_row)
         layout.addWidget(status_group)
 
         top = QHBoxLayout()
-        strategy_group = QGroupBox('추천 옵션')
+        strategy_group = QGroupBox('번호 추천 설정')
         form = QFormLayout(strategy_group)
         preset_row = QHBoxLayout()
         self.preset_combo = QComboBox()
@@ -133,84 +133,84 @@ class Pension720Page(QWidget):
         self.delete_preset_btn = QPushButton('삭제')
         self.delete_preset_btn.clicked.connect(self.delete_selected_preset)
         preset_row.addWidget(self.delete_preset_btn)
-        form.addRow('프리셋', preset_row)
+        form.addRow('저장된 설정', preset_row)
 
-        self.experimental_chk = QCheckBox('실험 전략 포함')
+        self.experimental_chk = QCheckBox('실험 중인 방식도 보기')
         self.experimental_chk.toggled.connect(self.populate_strategy_select)
         form.addRow(self.experimental_chk)
 
         self.strategy_combo = QComboBox()
-        form.addRow('전략', self.strategy_combo)
+        form.addRow('추천 방식', self.strategy_combo)
 
         self.count_spin = QSpinBox()
         self.count_spin.setRange(1, APP_CONFIG['MAX_SETS'])
         self.count_spin.setValue(5)
-        form.addRow('추천 개수', self.count_spin)
+        form.addRow('받을 개수', self.count_spin)
 
         self.analysis_preset_combo = QComboBox()
-        self.analysis_preset_combo.addItem('빠름', 'fast')
-        self.analysis_preset_combo.addItem('기본', 'basic')
-        self.analysis_preset_combo.addItem('정밀', 'precise')
-        self.analysis_preset_combo.addItem('직접', 'custom')
+        self.analysis_preset_combo.addItem('빠르게', 'fast')
+        self.analysis_preset_combo.addItem('보통', 'basic')
+        self.analysis_preset_combo.addItem('꼼꼼하게', 'precise')
+        self.analysis_preset_combo.addItem('직접 정하기', 'custom')
         self.analysis_preset_combo.currentIndexChanged.connect(self.apply_analysis_preset_from_combo)
-        form.addRow('분석 강도', self.analysis_preset_combo)
+        form.addRow('얼마나 꼼꼼히 볼지', self.analysis_preset_combo)
 
         self.lookback_spin = QSpinBox()
         self.lookback_spin.setRange(1, 300)
         self.lookback_spin.setValue(40)
-        form.addRow('최근 회차', self.lookback_spin)
+        form.addRow('참고할 최근 회차 수', self.lookback_spin)
 
         self.pool_spin = QSpinBox()
         self.pool_spin.setRange(20, 800)
         self.pool_spin.setSingleStep(10)
         self.pool_spin.setValue(140)
-        form.addRow('후보풀', self.pool_spin)
+        form.addRow('검토할 후보 개수', self.pool_spin)
 
         self.seed_edit = QLineEdit()
-        self.seed_edit.setPlaceholderText('비워두면 랜덤')
-        form.addRow('시드', self.seed_edit)
+        self.seed_edit.setPlaceholderText('비워두면 매번 다르게')
+        form.addRow('고정값', self.seed_edit)
 
         self.target_draw_spin = QSpinBox()
         self.target_draw_spin.setRange(1, 9999)
-        form.addRow('저장 대상 회차', self.target_draw_spin)
+        form.addRow('저장할 회차', self.target_draw_spin)
 
         self.groups_edit = QLineEdit()
-        self.groups_edit.setPlaceholderText('예: 1,2,5')
-        form.addRow('선택 조', self.groups_edit)
+        self.groups_edit.setPlaceholderText('원하는 조만 (예: 1,2,5)')
+        form.addRow('원하는 조(1~5)', self.groups_edit)
 
         self.fixed_digits_edit = QLineEdit()
-        self.fixed_digits_edit.setPlaceholderText('예: 1=0, 6=7')
-        form.addRow('자리 고정', self.fixed_digits_edit)
+        self.fixed_digits_edit.setPlaceholderText('예: 첫째 자리는 0, 여섯째 자리는 7 → 1=0, 6=7')
+        form.addRow('정해둘 자리 숫자', self.fixed_digits_edit)
 
         self.excluded_digits_edit = QLineEdit()
-        self.excluded_digits_edit.setPlaceholderText('예: 2=9,8; 5=0')
-        form.addRow('자리 제외', self.excluded_digits_edit)
+        self.excluded_digits_edit.setPlaceholderText('예: 둘째 자리에서 9, 8 빼기 → 2=9,8')
+        form.addRow('빼고 싶은 자리 숫자', self.excluded_digits_edit)
 
         self.sum_min_spin, self.sum_max_spin = self._pair_spins(0, 54)
-        form.addRow('숫자합', self._pair_widget(self.sum_min_spin, self.sum_max_spin))
+        form.addRow('여섯 자리 합', self._pair_widget(self.sum_min_spin, self.sum_max_spin))
         self.odd_min_spin, self.odd_max_spin = self._pair_spins(0, 6)
-        form.addRow('홀수 자리', self._pair_widget(self.odd_min_spin, self.odd_max_spin))
+        form.addRow('홀수인 자리 수', self._pair_widget(self.odd_min_spin, self.odd_max_spin))
         self.high_min_spin, self.high_max_spin = self._pair_spins(0, 6)
-        form.addRow('고숫자(5+) 자리', self._pair_widget(self.high_min_spin, self.high_max_spin))
+        form.addRow('5 이상인 자리 수', self._pair_widget(self.high_min_spin, self.high_max_spin))
 
         self.unique_spin = QSpinBox()
         self.unique_spin.setRange(-1, 6)
-        self.unique_spin.setSpecialValueText('미사용')
+        self.unique_spin.setSpecialValueText('사용 안 함')
         self.unique_spin.setValue(-1)
-        form.addRow('최소 숫자 종류', self.unique_spin)
+        form.addRow('서로 다른 숫자 최소 개수', self.unique_spin)
 
         self.max_same_spin = QSpinBox()
         self.max_same_spin.setRange(-1, 6)
-        self.max_same_spin.setSpecialValueText('미사용')
+        self.max_same_spin.setSpecialValueText('사용 안 함')
         self.max_same_spin.setValue(-1)
-        form.addRow('같은 숫자 최대', self.max_same_spin)
+        form.addRow('같은 숫자 최대 개수', self.max_same_spin)
 
-        self.recommend_btn = QPushButton('추천 시작')
+        self.recommend_btn = QPushButton('번호 추천받기')
         self.recommend_btn.clicked.connect(self.run_recommendation)
         form.addRow(self.recommend_btn)
         top.addWidget(strategy_group, 2)
 
-        campaign_group = QGroupBox('캠페인')
+        campaign_group = QGroupBox('묶음 구매')
         campaign_form = QFormLayout(campaign_group)
         self.campaign_start_spin = QSpinBox()
         self.campaign_start_spin.setRange(1, 9999)
@@ -218,51 +218,51 @@ class Pension720Page(QWidget):
         self.campaign_weeks_spin = QSpinBox()
         self.campaign_weeks_spin.setRange(1, APP_CONFIG['MAX_CAMPAIGN_WEEKS'])
         self.campaign_weeks_spin.setValue(4)
-        campaign_form.addRow('회차 수', self.campaign_weeks_spin)
+        campaign_form.addRow('이어서 할 회차 수', self.campaign_weeks_spin)
         self.campaign_sets_spin = QSpinBox()
         self.campaign_sets_spin.setRange(1, APP_CONFIG['MAX_CAMPAIGN_SETS_PER_WEEK'])
         self.campaign_sets_spin.setValue(3)
-        campaign_form.addRow('회차당 세트', self.campaign_sets_spin)
-        self.campaign_btn = QPushButton('캠페인 생성')
+        campaign_form.addRow('회차마다 개수', self.campaign_sets_spin)
+        self.campaign_btn = QPushButton('묶음으로 만들기')
         self.campaign_btn.clicked.connect(self.run_campaign_recommendation)
         campaign_form.addRow(self.campaign_btn)
-        self.reset_campaign_btn = QPushButton('캠페인 기본값')
+        self.reset_campaign_btn = QPushButton('기본값으로 되돌리기')
         self.reset_campaign_btn.clicked.connect(lambda: self.reset_campaign_defaults(force=True))
         campaign_form.addRow(self.reset_campaign_btn)
         top.addWidget(campaign_group, 1)
         layout.addLayout(top)
 
         self.recommendations_table = QTableWidget(0, 6)
-        self.recommendations_table.setHorizontalHeaderLabels(['#', '조', '번호', '점수', '전략', '설명'])
+        self.recommendations_table.setHorizontalHeaderLabels(['순서', '조', '번호', '추천도', '방식', '이유'])
         self.recommendations_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.recommendations_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self.recommendations_table, 1)
 
         recommend_actions = QHBoxLayout()
-        self.save_selected_btn = QPushButton('선택 저장')
+        self.save_selected_btn = QPushButton('고른 번호 저장')
         self.save_selected_btn.clicked.connect(self.save_selected_recommendation)
         recommend_actions.addWidget(self.save_selected_btn)
-        self.save_expansion_btn = QPushButton('확장 조 모두 저장')
+        self.save_expansion_btn = QPushButton('같은 번호 5개 조 모두 저장')
         self.save_expansion_btn.clicked.connect(self.save_selected_expansion)
         recommend_actions.addWidget(self.save_expansion_btn)
         recommend_actions.addStretch()
         layout.addLayout(recommend_actions)
 
-        saved_group = QGroupBox('저장 번호 / 당첨 확인')
+        saved_group = QGroupBox('저장한 번호 확인하기')
         saved_layout = QVBoxLayout(saved_group)
         saved_actions = QHBoxLayout()
         self.saved_summary_label = QLabel('0개 저장됨')
         saved_actions.addWidget(self.saved_summary_label)
-        self.copy_saved_btn = QPushButton('복사')
+        self.copy_saved_btn = QPushButton('복사하기')
         self.copy_saved_btn.clicked.connect(self.copy_saved_tickets)
         saved_actions.addWidget(self.copy_saved_btn)
-        self.export_csv_btn = QPushButton('CSV 내보내기')
+        self.export_csv_btn = QPushButton('파일로 저장')
         self.export_csv_btn.clicked.connect(self.export_saved_tickets_csv)
         saved_actions.addWidget(self.export_csv_btn)
-        self.clear_tickets_btn = QPushButton('전체 정리')
+        self.clear_tickets_btn = QPushButton('모두 지우기')
         self.clear_tickets_btn.clicked.connect(self.clear_saved_tickets)
         saved_actions.addWidget(self.clear_tickets_btn)
-        self.check_latest_btn = QPushButton('확인')
+        self.check_latest_btn = QPushButton('당첨 확인하기')
         self.check_latest_btn.clicked.connect(self.run_saved_ticket_check)
         saved_actions.addWidget(self.check_latest_btn)
         saved_actions.addStretch()
@@ -270,12 +270,12 @@ class Pension720Page(QWidget):
 
         saved_tables = QHBoxLayout()
         self.saved_table = QTableWidget(0, 7)
-        self.saved_table.setHorizontalHeaderLabels(['조', '번호', '대상 회차', '출처', '메모', '생성일', '상태'])
+        self.saved_table.setHorizontalHeaderLabels(['조', '번호', '구매 회차', '가져온 곳', '메모', '저장한 날', '상태'])
         self.saved_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.saved_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         saved_tables.addWidget(self.saved_table)
         self.campaign_table = QTableWidget(0, 5)
-        self.campaign_table.setHorizontalHeaderLabels(['이름', '시작', '회차 수', '회차당', '저장'])
+        self.campaign_table.setHorizontalHeaderLabels(['이름', '시작 회차', '회차 수', '회차마다', '저장된 개수'])
         self.campaign_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.campaign_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         saved_tables.addWidget(self.campaign_table)
@@ -295,7 +295,7 @@ class Pension720Page(QWidget):
         right = QSpinBox()
         for spin in (left, right):
             spin.setRange(-1, max_value)
-            spin.setSpecialValueText('미사용')
+            spin.setSpecialValueText('사용 안 함')
             spin.setValue(-1)
         return left, right
 
@@ -325,7 +325,9 @@ class Pension720Page(QWidget):
         self.strategy_combo.blockSignals(True)
         self.strategy_combo.clear()
         for meta in list_pension720_strategies(include_experimental=self.experimental_chk.isChecked()):
-            self.strategy_combo.addItem(f"{meta['label']} (등급 {meta['tier']})", meta['id'])
+            summary = str(meta.get('summary') or '').strip()
+            label = f"{meta['label']} — {summary}" if summary else str(meta['label'])
+            self.strategy_combo.addItem(label, meta['id'])
         resolved = resolve_pension720_strategy_id(current)
         index = self.strategy_combo.findData(resolved)
         self.strategy_combo.setCurrentIndex(index if index >= 0 else 0)
@@ -335,9 +337,9 @@ class Pension720Page(QWidget):
         current = str(self.preset_combo.currentData() or '')
         self.preset_combo.blockSignals(True)
         self.preset_combo.clear()
-        self.preset_combo.addItem('프리셋 선택', '')
+        self.preset_combo.addItem('저장된 설정 선택', '')
         for preset in self.app_window.store.get_strategy_presets('pension720'):
-            self.preset_combo.addItem(str(preset.get('name') or '이름 없는 프리셋'), str(preset.get('id') or ''))
+            self.preset_combo.addItem(str(preset.get('name') or '이름 없는 설정'), str(preset.get('id') or ''))
         index = self.preset_combo.findData(current)
         self.preset_combo.setCurrentIndex(index if index >= 0 else 0)
         self.preset_combo.blockSignals(False)
@@ -475,13 +477,13 @@ class Pension720Page(QWidget):
         return '; '.join(f"{index + 1}={','.join(str(digit) for digit in digits)}" for index, digits in enumerate(value[:6]) if digits)
 
     def save_current_preset(self):
-        name, ok = QInputDialog.getText(self, '연금복권 프리셋 저장', '프리셋 이름')
+        name, ok = QInputDialog.getText(self, '연금복권 설정 저장', '설정 이름')
         cleaned = name.strip()
         if not ok or not cleaned:
             return
         preset = self.app_window.store.save_strategy_preset('pension720', cleaned, self.build_request())
         if not preset:
-            QMessageBox.warning(self, '프리셋 저장', '프리셋을 저장할 수 없습니다.')
+            QMessageBox.warning(self, '설정 저장', '설정을 저장할 수 없습니다.')
             return
         self.reload_presets()
         index = self.preset_combo.findData(str(preset.get('id') or ''))
@@ -497,7 +499,7 @@ class Pension720Page(QWidget):
         preset = self._get_selected_preset()
         if not preset:
             return
-        result = QMessageBox.question(self, '프리셋 삭제', f"'{preset.get('name')}' 프리셋을 삭제할까요?")
+        result = QMessageBox.question(self, '설정 삭제', f"'{preset.get('name')}' 설정을 삭제할까요?")
         if result != QMessageBox.StandardButton.Yes:
             return
         if self.app_window.store.delete_strategy_preset(str(preset.get('id') or '')):
@@ -551,18 +553,18 @@ class Pension720Page(QWidget):
             self._settle_saved_pension_tickets()
             self.reset_campaign_defaults(force=False)
         self.refresh_view_state()
-        self.app_window.show_status('연금복권 데이터를 새로고침했습니다.' if rows else '연금복권 데이터를 확인하지 못했습니다.', 4000)
+        self.app_window.show_status('연금복권 최신 정보를 확인했어요.' if rows else '연금복권 정보를 확인하지 못했어요.', 4000)
 
     def _on_official_data_error(self, message: str):
         self.app_window.store.set_pension720_data_health(
             availability='full' if self.pension720_stats else 'none',
             source='static' if self.pension720_stats else 'none',
             latestDrawNo=int(self.pension720_stats[0].get('draw_no', 0)) if self.pension720_stats else 0,
-            message=f'공식 데이터 확인 실패: {message}'[:240],
+            message=f'최신 정보 확인 실패: {message}'[:240],
             updatedAt=dt.datetime.now().isoformat(),
         )
         self.refresh_view_state()
-        QMessageBox.warning(self, '연금복권 데이터', message)
+        QMessageBox.warning(self, '최신 정보 확인', message)
 
     def refresh_view_state(self):
         self.render_status()
@@ -573,7 +575,7 @@ class Pension720Page(QWidget):
 
     def render_status(self):
         health = self.app_window.store.state.get('pension720DataHealth') or {}
-        self.status_label.setText(f"{health.get('availability')} | {health.get('message') or health.get('source') or '-'}")
+        self.status_label.setText(str(health.get('message') or '연금복권 정보를 준비하는 중...'))
         latest = self.pension720_stats[0] if self.pension720_stats else None
         if latest:
             self.latest_label.setText(f"{latest.get('draw_no')}회 {latest.get('date')} | {latest.get('group')}조 {latest.get('number')} / 보너스 {latest.get('bonus_number')}")
@@ -597,9 +599,9 @@ class Pension720Page(QWidget):
             top_digits = sorted([(digit, weight) for digit, weight in enumerate(weights)], key=lambda item: item[1], reverse=True)[:3]
             row = self.digit_stats_table.rowCount()
             self.digit_stats_table.insertRow(row)
-            self.digit_stats_table.setItem(row, 0, QTableWidgetItem(f'{pos}번째'))
+            self.digit_stats_table.setItem(row, 0, QTableWidgetItem(f'{pos}번째 자리'))
             for col, (digit, weight) in enumerate(top_digits, start=1):
-                self.digit_stats_table.setItem(row, col, QTableWidgetItem(f'{digit} ({weight:.1f})'))
+                self.digit_stats_table.setItem(row, col, QTableWidgetItem(f'{digit} ({int(round(float(weight)))}번)'))
 
     def update_data_gate(self):
         has_stats = bool(self.pension720_stats)
@@ -616,7 +618,7 @@ class Pension720Page(QWidget):
 
     def run_recommendation(self):
         if not self.pension720_stats:
-            QMessageBox.warning(self, '연금복권 추천', '연금복권 데이터가 없습니다. 최신 데이터 확인을 먼저 실행해 주세요.')
+            QMessageBox.warning(self, '연금복권 추천', '연금복권 정보가 없습니다. [최신 정보 확인]을 먼저 눌러주세요.')
             return
         request = self.build_request()
         self.app_window.store.set_strategy_pref('pension720', request)
@@ -629,14 +631,14 @@ class Pension720Page(QWidget):
         thread = TaskThread(task, self)
         self._task = thread
         thread.resultReady.connect(self._on_recommendations_ready)
-        thread.errorOccurred.connect(lambda message: QMessageBox.warning(self, '연금복권 추천 실패', message))
+        thread.errorOccurred.connect(lambda message: QMessageBox.warning(self, '추천 실패', message))
         thread.finished.connect(lambda: self.update_data_gate())
         thread.start()
 
     def _on_recommendations_ready(self, rows: List[Dict[str, Any]]):
         self.last_recommendations = list(rows)
         self.render_recommendations()
-        self.app_window.show_status(f'연금복권 추천 {len(rows)}개를 만들었습니다.', 4000)
+        self.app_window.show_status(f'연금복권 번호 {len(rows)}개를 추천했어요.', 4000)
 
     def render_recommendations(self):
         self.recommendations_table.setRowCount(0)
@@ -647,9 +649,9 @@ class Pension720Page(QWidget):
                 str(index),
                 f"{item.get('group')}조",
                 str(item.get('number') or ''),
-                f"{float(item.get('score') or 0):.4f}",
+                f"{float(item.get('score') or 0):.2f}",
                 str(item.get('strategyLabel') or item.get('strategyId') or ''),
-                ' / '.join(str(reason) for reason in item.get('reasons', [])[:3]),
+                ' · '.join(str(reason) for reason in item.get('reasons', [])[:3]),
             ]
             for col, value in enumerate(values):
                 self.recommendations_table.setItem(row, col, QTableWidgetItem(value))
@@ -706,11 +708,11 @@ class Pension720Page(QWidget):
         result = self.app_window.store.add_pension720_tickets_bulk(rows)
         self._settle_saved_pension_tickets()
         self.refresh_view_state()
-        self.app_window.show_status(f"확장 조 {result.get('inserted', 0)}개를 저장했습니다.", 4000)
+        self.app_window.show_status(f"같은 번호 묶음 {result.get('inserted', 0)}개를 저장했어요.", 4000)
 
     def run_campaign_recommendation(self):
         if not self.pension720_stats:
-            QMessageBox.warning(self, '연금복권 캠페인', '연금복권 데이터가 없습니다. 최신 데이터 확인을 먼저 실행해 주세요.')
+            QMessageBox.warning(self, '묶음 구매', '연금복권 정보가 없습니다. [최신 정보 확인]을 먼저 눌러주세요.')
             return
         request = self.build_request()
         start_draw = self.campaign_start_spin.value()
@@ -718,7 +720,7 @@ class Pension720Page(QWidget):
         sets_per_draw = self.campaign_sets_spin.value()
         size_error = campaign_size_error(weeks, sets_per_draw)
         if size_error:
-            QMessageBox.warning(self, '연금복권 캠페인', size_error)
+            QMessageBox.warning(self, '묶음 구매', size_error)
             return
 
         def task() -> Dict[str, Any]:
@@ -752,14 +754,14 @@ class Pension720Page(QWidget):
         thread = TaskThread(task, self)
         self._task = thread
         thread.resultReady.connect(self._on_campaign_ready)
-        thread.errorOccurred.connect(lambda message: QMessageBox.warning(self, '연금복권 캠페인 실패', message))
+        thread.errorOccurred.connect(lambda message: QMessageBox.warning(self, '묶음 만들기 실패', message))
         thread.finished.connect(lambda: self.update_data_gate())
         thread.start()
 
     def _on_campaign_ready(self, payload: Dict[str, Any]):
         tickets = payload.get('tickets') or []
         if not tickets:
-            QMessageBox.information(self, '연금복권 캠페인', '생성된 번호가 없습니다.')
+            QMessageBox.information(self, '묶음 구매', '만들어진 번호가 없습니다.')
             return
         campaign = {
             'id': payload['campaignId'],
@@ -771,14 +773,14 @@ class Pension720Page(QWidget):
         }
         size_error = campaign_size_error(payload['weeks'], payload['setsPerDraw'])
         if size_error or self.app_window.store.normalize_pension720_campaign(campaign) is None:
-            QMessageBox.warning(self, '연금복권 캠페인', size_error or '캠페인 정보를 저장할 수 없어 번호를 저장하지 않았습니다.')
+            QMessageBox.warning(self, '묶음 구매', size_error or '묶음 정보를 저장할 수 없어 번호를 저장하지 않았습니다.')
             return
         result = self.app_window.store.add_pension720_tickets_bulk(tickets)
         if result.get('inserted', 0) > 0:
             self.app_window.store.add_pension720_campaign(campaign)
         self._settle_saved_pension_tickets()
         self.refresh_view_state()
-        self.app_window.show_status(f"연금복권 캠페인 저장 번호 {result.get('inserted', 0)}개 반영", 4000)
+        self.app_window.show_status(f"묶음 번호 {result.get('inserted', 0)}개를 저장했어요.", 4000)
 
     @staticmethod
     def _pension_ticket_status(ticket: Dict[str, Any]) -> str:
@@ -787,6 +789,10 @@ class Pension720Page(QWidget):
             label = str(checked.get('label') or '').strip()
             return f"{label}({checked.get('drawNo')}회)" if label else '확인'
         return '대기'
+
+    @staticmethod
+    def _source_label(source: Any) -> str:
+        return {'recommendation': '추천받음', 'campaign': '묶음 구매'}.get(str(source or ''), str(source or '-'))
 
     def render_saved_tables(self):
         tickets = self.app_window.store.state['pension720Tickets']
@@ -800,9 +806,9 @@ class Pension720Page(QWidget):
                 f"{ticket.get('group')}조",
                 str(ticket.get('number') or ''),
                 str(ticket.get('targetDrawNo') or ''),
-                str(ticket.get('source') or ''),
+                self._source_label(ticket.get('source')),
                 str(ticket.get('memo') or ''),
-                str(ticket.get('createdAt') or ''),
+                str(ticket.get('createdAt') or '')[:10],
                 self._pension_ticket_status(ticket),
             ]
             for col, value in enumerate(values):
@@ -835,21 +841,21 @@ class Pension720Page(QWidget):
         if not tickets:
             return
         ts = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
-        filepath, _ = QFileDialog.getSaveFileName(self, '연금복권 CSV 저장', f'lotto_pension_pro_pension720_tickets_{ts}.csv', 'CSV 파일 (*.csv)')
+        filepath, _ = QFileDialog.getSaveFileName(self, '연금복권 파일 저장', f'lotto_pension_pro_pension720_tickets_{ts}.csv', 'CSV 파일 (*.csv)')
         if not filepath:
             return
         try:
             Path(filepath).write_text(build_pension720_ticket_csv(tickets), encoding='utf-8-sig')
         except Exception as exc:
             logger.exception('Pension720 CSV export failed')
-            QMessageBox.warning(self, 'CSV 내보내기', str(exc))
+            QMessageBox.warning(self, '파일 저장', str(exc))
             return
-        self.app_window.show_status('연금복권 저장 목록 CSV를 내보냈습니다.', 4000)
+        self.app_window.show_status('연금복권 저장 목록을 파일로 저장했어요.', 4000)
 
     def clear_saved_tickets(self):
         if not self.app_window.store.state['pension720Tickets']:
             return
-        result = QMessageBox.question(self, '연금복권 저장 번호 정리', '저장한 연금복권 번호와 캠페인을 모두 삭제할까요?')
+        result = QMessageBox.question(self, '저장한 번호 지우기', '저장한 연금복권 번호와 묶음을 모두 지울까요?')
         if result != QMessageBox.StandardButton.Yes:
             return
         removed = self.app_window.store.clear_pension720_tickets()
@@ -877,7 +883,7 @@ class Pension720Page(QWidget):
             ]
             for col, value in enumerate(values):
                 self.check_table.setItem(row, col, QTableWidgetItem(value))
-        self.app_window.show_status('연금복권 저장 번호 확인을 완료했습니다.', 4000)
+        self.app_window.show_status('저장한 번호 확인이 끝났어요.', 4000)
 
     def _check_sort_value(self, item: Dict[str, Any]) -> float:
         status_order = {'target': 0, 'reference': 20, 'pending': 40, 'missing': 45}

@@ -26,7 +26,7 @@ class RealStatsDialog(QDialog):
         self._sync_latest_count = 0
         self._sync_failed_messages: List[str] = []
 
-        self.setWindowTitle("📈 실제 당첨 번호 통계")
+        self.setWindowTitle("실제 당첨 번호 통계")
         self.setMinimumSize(600, 550)
         self._setup_ui()
         self._apply_theme()
@@ -40,12 +40,12 @@ class RealStatsDialog(QDialog):
         theme = ThemeManager.get_theme()
 
         header_layout = QHBoxLayout()
-        header_label = QLabel("📊 당첨 번호 통계")
+        header_label = QLabel("당첨 번호 통계")
         header_label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {theme['text_primary']};")
         header_layout.addWidget(header_label)
         header_layout.addStretch()
 
-        self.sync_btn = QPushButton("🔄 최근 5회 동기화")
+        self.sync_btn = QPushButton("최근 5회 가져오기")
         self.sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.sync_btn.clicked.connect(self._sync_recent_data)
         self.sync_btn.setStyleSheet(
@@ -104,8 +104,8 @@ class RealStatsDialog(QDialog):
 
         if not analysis:
             no_data_label = QLabel(
-                "📊 아직 수집된 당첨 데이터가 없습니다.\n\n"
-                "앱 시작 자동 동기화 또는 당첨 정보 위젯 조회 후\n"
+                "아직 가져온 당첨 정보가 없습니다.\n\n"
+                "설정에서 최신 정보를 가져온 뒤\n"
                 "다시 열면 통계가 표시됩니다."
             )
             no_data_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -114,11 +114,11 @@ class RealStatsDialog(QDialog):
             self.content_layout.addStretch()
             return
 
-        summary_label = QLabel(f"📊 총 {analysis['total_draws']}회차 분석 결과")
+        summary_label = QLabel(f"총 {analysis['total_draws']}개 회차 분석 결과")
         summary_label.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {theme['accent']};")
         self.content_layout.addWidget(summary_label)
 
-        hot_group = QGroupBox("🔥 핫 넘버 TOP 10 (가장 많이 나온 번호)")
+        hot_group = QGroupBox("자주 나온 번호 TOP 10")
         hot_layout = QHBoxLayout(hot_group)
         hot_layout.setSpacing(8)
         for num, count in analysis["hot_numbers"]:
@@ -129,7 +129,7 @@ class RealStatsDialog(QDialog):
         hot_layout.addStretch()
         self.content_layout.addWidget(hot_group)
 
-        cold_group = QGroupBox("❄️ 콜드 넘버 (가장 적게 나온 번호)")
+        cold_group = QGroupBox("오래 안 나온 번호")
         cold_layout = QHBoxLayout(cold_group)
         cold_layout.setSpacing(8)
         for num, count in analysis["cold_numbers"]:
@@ -141,7 +141,7 @@ class RealStatsDialog(QDialog):
         self.content_layout.addWidget(cold_group)
 
         if range_dist:
-            range_group = QGroupBox("📊 번호대별 분포")
+            range_group = QGroupBox("번호대별 분포")
             range_layout = QVBoxLayout(range_group)
             total_nums = sum(range_dist.values())
             for range_name, count in range_dist.items():
@@ -167,7 +167,7 @@ class RealStatsDialog(QDialog):
             self.content_layout.addWidget(range_group)
 
         if recent:
-            recent_group = QGroupBox("📅 최근 당첨 번호")
+            recent_group = QGroupBox("최근 당첨 번호")
             recent_layout = QVBoxLayout(recent_group)
             for data in recent:
                 row = QHBoxLayout()
@@ -234,18 +234,18 @@ class RealStatsDialog(QDialog):
         self._sync_latest_count = 0
         self._sync_failed_messages = []
         self.sync_btn.setEnabled(False)
-        self.progress_label.setText("데이터 동기화 중...")
+        self.progress_label.setText("최신 정보를 가져오는 중...")
         self.progress_label.setVisible(True)
         self.network_manager.fetch_draws(draws)
 
     def _set_summary_status(self):
-        parts = [f"저장 완료 {self._sync_saved_count}회", f"이미 최신 {self._sync_latest_count}회"]
+        parts = [f"새로 가져옴 {self._sync_saved_count}개", f"이미 최신 {self._sync_latest_count}개"]
         if self._sync_failed_messages:
             failed_preview = ", ".join(self._sync_failed_messages[:3])
             if len(self._sync_failed_messages) > 3:
                 failed_preview += " 외"
             parts.append(f"실패 {failed_preview}")
-        self.progress_label.setText("동기화 완료 · " + " · ".join(parts))
+        self.progress_label.setText("가져오기 완료 · " + " · ".join(parts))
 
     def _complete_sync_step(self):
         if self._pending_sync_count > 0:
@@ -260,8 +260,8 @@ class RealStatsDialog(QDialog):
         try:
             normalized = normalize_legacy_draw_payload(data)
             if not normalized:
-                self._sync_failed_messages.append("응답 형식 오류")
-                self.progress_label.setText("실패 회차 발생: 응답 형식 오류")
+                self._sync_failed_messages.append("정보 형식 오류")
+                self.progress_label.setText("실패 발생: 정보 형식 오류")
                 return
 
             status = self.stats_manager.upsert_winning_data(
@@ -275,21 +275,21 @@ class RealStatsDialog(QDialog):
             )
             if status in {"inserted", "updated"}:
                 self._sync_saved_count += 1
-                self.progress_label.setText(f"{normalized['draw_no']}회차 저장 완료")
+                self.progress_label.setText(f"{normalized['draw_no']}회 저장했어요")
             elif status == "unchanged":
                 self._sync_latest_count += 1
-                self.progress_label.setText(f"{normalized['draw_no']}회차는 이미 최신입니다.")
+                self.progress_label.setText(f"{normalized['draw_no']}회는 이미 최신이에요.")
             else:
                 self._sync_failed_messages.append(f"{normalized['draw_no']}회차")
-                self.progress_label.setText(f"{normalized['draw_no']}회차 저장 실패")
+                self.progress_label.setText(f"{normalized['draw_no']}회 저장 실패")
         except Exception as exc:
             logger.error("Sync error: %s", exc)
-            self._sync_failed_messages.append("동기화 예외")
-            self.progress_label.setText("실패 회차 발생: 동기화 예외")
+            self._sync_failed_messages.append("가져오기 오류")
+            self.progress_label.setText("실패 발생: 가져오기 오류")
         finally:
             self._complete_sync_step()
 
     def _on_error(self, msg: str):
         self._sync_failed_messages.append(msg)
-        self.progress_label.setText(f"실패 회차 발생: {msg}")
+        self.progress_label.setText(f"실패 발생: {msg}")
         self._complete_sync_step()

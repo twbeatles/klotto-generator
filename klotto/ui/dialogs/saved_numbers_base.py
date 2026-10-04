@@ -32,12 +32,12 @@ class SavedNumbersBaseDialog(QDialog):
     def _copy_selected_numbers(self, success_message: str):
         numbers = self._get_selected_numbers()
         if not numbers:
-            QMessageBox.warning(self, "선택 필요", "복사할 항목을 선택하세요.")
+            QMessageBox.warning(self, "선택 필요", "복사할 줄을 먼저 고르세요.")
             return
 
         clipboard = QApplication.clipboard()
         if clipboard is None:
-            QMessageBox.warning(self, "오류", "클립보드를 사용할 수 없습니다.")
+            QMessageBox.warning(self, "오류", "복사 기능을 쓸 수 없어요.")
             return
 
         nums_str = " ".join(f"{number:02d}" for number in numbers)

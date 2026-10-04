@@ -11,7 +11,7 @@ class HistoryDialog(SavedNumbersBaseDialog):
     def __init__(self, history_manager, parent=None):
         super().__init__(parent)
         self.history_manager = history_manager
-        self.setWindowTitle("📜 생성 히스토리")
+        self.setWindowTitle("만든 기록")
         self.setMinimumSize(550, 500)
         self._setup_ui()
         self._apply_theme()
@@ -48,7 +48,7 @@ class HistoryDialog(SavedNumbersBaseDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        copy_btn = QPushButton("📋 복사")
+        copy_btn = QPushButton("복사하기")
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.setStyleSheet(
             f"""
@@ -66,7 +66,7 @@ class HistoryDialog(SavedNumbersBaseDialog):
         copy_btn.clicked.connect(self._copy_selected)
         btn_layout.addWidget(copy_btn)
 
-        qr_btn = QPushButton("📱 QR")
+        qr_btn = QPushButton("QR로 보기")
         qr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         qr_btn.setStyleSheet(
             f"""
@@ -84,7 +84,7 @@ class HistoryDialog(SavedNumbersBaseDialog):
         qr_btn.clicked.connect(self._show_selected_qr)
         btn_layout.addWidget(qr_btn)
 
-        clear_btn = QPushButton("🗑️ 전체 삭제")
+        clear_btn = QPushButton("모두 지우기")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_btn.setStyleSheet(
             f"""
@@ -137,27 +137,27 @@ class HistoryDialog(SavedNumbersBaseDialog):
         for entry in history:
             numbers_str = " - ".join(f"{number:02d}" for number in entry["numbers"])
             created = entry.get("created_at", "")[:16].replace("T", " ")
-            item = QListWidgetItem(f"🎱  {numbers_str}   [{created}]")
+            item = QListWidgetItem(f"{numbers_str}   [{created}]")
             item.setData(Qt.ItemDataRole.UserRole, entry["numbers"])
             self.list_widget.addItem(item)
         self.count_label.setText(f"총 {len(self.history_manager.get_all())}개")
 
     def _copy_selected(self):
-        self._copy_selected_numbers("번호가 복사되었습니다:\n{numbers}")
+        self._copy_selected_numbers("번호를 복사했어요:\n{numbers}")
 
     def _clear_history(self):
         if not self.history_manager.get_all():
-            QMessageBox.information(self, "알림", "삭제할 히스토리가 없습니다.")
+            QMessageBox.information(self, "알림", "지울 기록이 없습니다.")
             return
 
         reply = QMessageBox.question(
             self,
-            "히스토리 삭제",
-            "모든 히스토리를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.",
+            "기록 지우기",
+            "만든 기록을 모두 지울까요?\n지우면 되돌릴 수 없어요.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.history_manager.clear()
             self._refresh_list()
-            QMessageBox.information(self, "완료", "히스토리가 삭제되었습니다.")
+            QMessageBox.information(self, "완료", "만든 기록을 모두 지웠어요.")

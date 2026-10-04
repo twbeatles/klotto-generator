@@ -14,7 +14,7 @@ class FavoritesDialog(SavedNumbersBaseDialog):
     def __init__(self, favorites_manager: FavoritesManager, parent=None):
         super().__init__(parent)
         self.favorites_manager = favorites_manager
-        self.setWindowTitle("⭐ 즐겨찾기")
+        self.setWindowTitle("즐겨찾기")
         self.setMinimumSize(500, 400)
         self._setup_ui()
         self._apply_theme()
@@ -49,7 +49,7 @@ class FavoritesDialog(SavedNumbersBaseDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        copy_btn = QPushButton("📋 복사")
+        copy_btn = QPushButton("복사하기")
         copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         copy_btn.setStyleSheet(
             f"""
@@ -69,7 +69,7 @@ class FavoritesDialog(SavedNumbersBaseDialog):
         copy_btn.clicked.connect(self._copy_selected)
         btn_layout.addWidget(copy_btn)
 
-        qr_btn = QPushButton("📱 QR")
+        qr_btn = QPushButton("QR로 보기")
         qr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         qr_btn.setStyleSheet(
             f"""
@@ -87,7 +87,7 @@ class FavoritesDialog(SavedNumbersBaseDialog):
         qr_btn.clicked.connect(self._show_selected_qr)
         btn_layout.addWidget(qr_btn)
 
-        delete_btn = QPushButton("🗑️ 삭제")
+        delete_btn = QPushButton("지우기")
         delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         delete_btn.setStyleSheet(
             f"""
@@ -144,7 +144,7 @@ class FavoritesDialog(SavedNumbersBaseDialog):
             created = favorite.get("created_at", "")[:10]
             memo = favorite.get("memo", "")
 
-            display_text = f"🎱  {numbers_str}"
+            display_text = f"{numbers_str}"
             if memo:
                 display_text += f"  ({memo})"
             display_text += f"  [{created}]"
@@ -156,18 +156,18 @@ class FavoritesDialog(SavedNumbersBaseDialog):
         self.count_label.setText(f"총 {len(favorites)}개의 즐겨찾기")
 
     def _copy_selected(self):
-        self._copy_selected_numbers("번호가 클립보드에 복사되었습니다:\n{numbers}")
+        self._copy_selected_numbers("번호를 복사했어요:\n{numbers}")
 
     def _delete_selected(self):
         row = self.list_widget.currentRow()
         if row < 0:
-            QMessageBox.warning(self, "선택 필요", "삭제할 항목을 선택하세요.")
+            QMessageBox.warning(self, "선택 필요", "지울 항목을 먼저 고르세요.")
             return
 
         reply = QMessageBox.question(
             self,
-            "삭제 확인",
-            "선택한 즐겨찾기를 삭제하시겠습니까?",
+            "지우기 확인",
+            "고른 즐겨찾기를 지울까요?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

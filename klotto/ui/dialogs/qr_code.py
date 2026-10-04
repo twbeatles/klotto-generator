@@ -22,7 +22,7 @@ class QRCodeDialog(QDialog):
     def __init__(self, numbers: List[int], parent=None):
         super().__init__(parent)
         self.numbers = sorted(numbers)
-        self.setWindowTitle("📱 QR 코드")
+        self.setWindowTitle("QR 코드")
         self.setFixedSize(300, 350)
         self._setup_ui()
         self._apply_theme()
@@ -48,7 +48,7 @@ class QRCodeDialog(QDialog):
         if HAS_QRCODE:
             self._generate_qr()
         else:
-            self.qr_label.setText("qrcode 라이브러리가\n설치되지 않았습니다.")
+            self.qr_label.setText("QR 만들기에 필요한\n추가 기능이 없습니다.")
 
         layout.addWidget(self.qr_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -74,7 +74,7 @@ class QRCodeDialog(QDialog):
 
     def _generate_qr(self):
         if not HAS_QRCODE or qrcode is None:
-            self.qr_label.setText("qrcode 라이브러리가\n설치되지 않았습니다.")
+            self.qr_label.setText("QR 만들기에 필요한\n추가 기능이 없습니다.")
             return
 
         try:

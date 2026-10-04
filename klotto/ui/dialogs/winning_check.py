@@ -47,7 +47,7 @@ class WinningCheckDialog(QDialog):
         self._qr_network_manager: Optional[LottoNetworkManager] = None
         self._source_items: List[Dict[str, Any]] = []
 
-        self.setWindowTitle("🎯 당첨 확인")
+        self.setWindowTitle("당첨 확인")
         self.setMinimumSize(650, 500)
         self._setup_ui()
         self._apply_theme()
@@ -78,7 +78,7 @@ class WinningCheckDialog(QDialog):
 
         self.source_combo = QComboBox()
         self.source_combo.addItem("즐겨찾기에서 선택")
-        self.source_combo.addItem("히스토리에서 선택")
+        self.source_combo.addItem("만든 기록에서 선택")
         self.source_combo.currentIndexChanged.connect(self._update_number_list)
         source_layout.addWidget(self.source_combo)
 
@@ -87,7 +87,7 @@ class WinningCheckDialog(QDialog):
         source_layout.addWidget(self.number_list)
         layout.addWidget(self.source_group)
 
-        self.check_btn = QPushButton("🔍 당첨 확인 실행")
+        self.check_btn = QPushButton("당첨 확인하기")
         self.check_btn.setMinimumHeight(45)
         self.check_btn.clicked.connect(self._run_check)
         layout.addWidget(self.check_btn)
@@ -176,7 +176,7 @@ class WinningCheckDialog(QDialog):
         header.addWidget(draw_label)
 
         if rank:
-            rank_label = QLabel(f"🎉 {rank}등")
+            rank_label = QLabel(f"{rank}등")
             rank_colors = {1: "#FF0000", 2: "#FF6600", 3: "#FFCC00", 4: "#00CC00", 5: "#0066CC"}
             rank_label.setStyleSheet(f"font-weight: bold; color: {rank_colors.get(rank, theme['text_primary'])};")
         else:
@@ -235,7 +235,7 @@ class WinningCheckDialog(QDialog):
 
         winning_data = self.stats_manager.winning_data
         if not winning_data:
-            self._add_info_result("확인할 당첨 데이터가 없습니다.\n당첨 정보 위젯에서 회차를 조회해 주세요.")
+            self._add_info_result("확인할 당첨 정보가 없습니다.\n설정에서 최신 정보를 먼저 가져오세요.")
             return
 
         found_any = False
@@ -255,7 +255,7 @@ class WinningCheckDialog(QDialog):
                 self.result_inner_layout.addWidget(result_row)
 
         if not found_any:
-            self._add_info_result("😢 3개 이상 일치하는 회차가 없습니다.")
+            self._add_info_result("3개 이상 일치하는 회차가 없습니다.")
 
     def _normalize_qr_payload(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -301,7 +301,7 @@ class WinningCheckDialog(QDialog):
         self.check_btn.setEnabled(False)
         manager = self._qr_network_manager
         if manager is None:
-            self._on_qr_draw_error("QR 네트워크 매니저를 초기화하지 못했습니다.")
+            self._on_qr_draw_error("당첨 정보를 가져올 준비를 하지 못했습니다.")
             return
         manager.fetch_draw(draw_no)
 
@@ -323,7 +323,7 @@ class WinningCheckDialog(QDialog):
 
         expected_draw = self._pending_qr_payload["draw_no"]
         if normalized_draw["draw_no"] != expected_draw:
-            self._on_qr_draw_error("요청한 회차와 다른 응답이 수신되었습니다.")
+            self._on_qr_draw_error("요청한 회차와 다른 정보가 왔습니다.")
             return
 
         status = self.stats_manager.upsert_winning_data(

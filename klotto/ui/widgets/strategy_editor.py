@@ -46,14 +46,14 @@ class StrategyRequestEditor(QGroupBox):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
-        self.experimental_chk = QCheckBox('실험 전략 포함')
+        self.experimental_chk = QCheckBox('실험 중인 방식도 보기')
         self.experimental_chk.toggled.connect(self.reload_strategies)
         header.addWidget(self.experimental_chk)
         header.addStretch()
         layout.addLayout(header)
 
         preset_row = QHBoxLayout()
-        preset_row.addWidget(QLabel('프리셋'))
+        preset_row.addWidget(QLabel('저장된 설정'))
         self.preset_combo = QComboBox()
         self.preset_combo.setMinimumWidth(180)
         preset_row.addWidget(self.preset_combo, 1)
@@ -70,59 +70,59 @@ class StrategyRequestEditor(QGroupBox):
 
         form = QFormLayout()
         self.strategy_combo = QComboBox()
-        form.addRow('전략', self.strategy_combo)
+        form.addRow('만드는 방식', self.strategy_combo)
 
         self.lookback_spin = QSpinBox()
         self.lookback_spin.setRange(5, 120)
-        form.addRow('최근 회차', self.lookback_spin)
+        form.addRow('참고할 최근 회차 수', self.lookback_spin)
 
         self.simulation_spin = QSpinBox()
         self.simulation_spin.setRange(1000, 20000)
         self.simulation_spin.setSingleStep(500)
-        form.addRow('시뮬레이션 수', self.simulation_spin)
+        form.addRow('분석 횟수', self.simulation_spin)
 
         self.wheel_pool_spin = QSpinBox()
         self.wheel_pool_spin.setRange(0, 20)
         self.wheel_pool_spin.setSpecialValueText('사용 안 함')
-        form.addRow('휠 후보군', self.wheel_pool_spin)
+        form.addRow('확장 후보 수', self.wheel_pool_spin)
 
         self.wheel_guarantee_spin = QSpinBox()
         self.wheel_guarantee_spin.setRange(0, 5)
         self.wheel_guarantee_spin.setSpecialValueText('사용 안 함')
-        form.addRow('휠 보장수', self.wheel_guarantee_spin)
+        form.addRow('보장 단계', self.wheel_guarantee_spin)
 
         self.seed_edit = QLineEdit()
-        self.seed_edit.setPlaceholderText('비워두면 랜덤')
-        form.addRow('시드', self.seed_edit)
+        self.seed_edit.setPlaceholderText('비워두면 매번 다르게')
+        form.addRow('고정값', self.seed_edit)
 
         self.payout_combo = QComboBox()
-        self.payout_combo.addItem('동적 1등 우선', 'hybrid_dynamic_first')
-        self.payout_combo.addItem('고정 상금 빠른 평가', 'fast_fixed')
-        form.addRow('정산 모드', self.payout_combo)
+        self.payout_combo.addItem('실제 당첨금처럼 계산', 'hybrid_dynamic_first')
+        self.payout_combo.addItem('빠르게 어림 계산', 'fast_fixed')
+        form.addRow('상금 계산 방식', self.payout_combo)
 
         self.odd_min_spin, self.odd_max_spin = self._pair_spins(0, 6)
-        form.addRow('홀수 수', self._pair_widget(self.odd_min_spin, self.odd_max_spin))
+        form.addRow('홀수 개수', self._pair_widget(self.odd_min_spin, self.odd_max_spin))
 
         self.high_min_spin, self.high_max_spin = self._pair_spins(0, 6)
-        form.addRow('고수(24+) 수', self._pair_widget(self.high_min_spin, self.high_max_spin))
+        form.addRow('큰 수(24 이상) 개수', self._pair_widget(self.high_min_spin, self.high_max_spin))
 
         self.sum_min_spin, self.sum_max_spin = self._pair_spins(0, 300)
-        form.addRow('합계 범위', self._pair_widget(self.sum_min_spin, self.sum_max_spin))
+        form.addRow('번호 합 범위', self._pair_widget(self.sum_min_spin, self.sum_max_spin))
 
         self.ac_min_spin, self.ac_max_spin = self._pair_spins(0, 20)
-        form.addRow('AC 범위', self._pair_widget(self.ac_min_spin, self.ac_max_spin))
+        form.addRow('번호 퍼짐 정도', self._pair_widget(self.ac_min_spin, self.ac_max_spin))
 
         self.max_consecutive_spin = QSpinBox()
         self.max_consecutive_spin.setRange(-1, 5)
-        self.max_consecutive_spin.setSpecialValueText('제한 없음')
+        self.max_consecutive_spin.setSpecialValueText('사용 안 함')
         self.max_consecutive_spin.setValue(-1)
-        form.addRow('최대 연속쌍', self.max_consecutive_spin)
+        form.addRow('이어지는 번호 제한', self.max_consecutive_spin)
 
         self.end_digit_spin = QSpinBox()
         self.end_digit_spin.setRange(-1, 6)
-        self.end_digit_spin.setSpecialValueText('제한 없음')
+        self.end_digit_spin.setSpecialValueText('사용 안 함')
         self.end_digit_spin.setValue(-1)
-        form.addRow('최소 끝수 종류', self.end_digit_spin)
+        form.addRow('끝자리 종류 수', self.end_digit_spin)
 
         layout.addLayout(form)
 
@@ -151,7 +151,8 @@ class StrategyRequestEditor(QGroupBox):
         self.strategy_combo.blockSignals(True)
         self.strategy_combo.clear()
         for meta in list_strategies(include_experimental=self.experimental_chk.isChecked(), scope=self.scope):
-            label = f"{meta['label']} ({meta['id']})"
+            summary = str(meta.get('summary') or '').strip()
+            label = f"{meta['label']} — {summary}" if summary else str(meta['label'])
             self.strategy_combo.addItem(label, meta['id'])
         index = max(0, self.strategy_combo.findData(current))
         self.strategy_combo.setCurrentIndex(index)
@@ -162,10 +163,10 @@ class StrategyRequestEditor(QGroupBox):
         current = self.preset_combo.currentData()
         self.preset_combo.blockSignals(True)
         self.preset_combo.clear()
-        self.preset_combo.addItem('프리셋 선택', '')
+        self.preset_combo.addItem('저장된 설정 선택', '')
         presets = self.store.get_strategy_presets(self.scope) if self.store else []
         for preset in presets:
-            self.preset_combo.addItem(str(preset.get('name') or '이름 없는 프리셋'), str(preset.get('id') or ''))
+            self.preset_combo.addItem(str(preset.get('name') or '이름 없는 설정'), str(preset.get('id') or ''))
         index = self.preset_combo.findData(current)
         self.preset_combo.setCurrentIndex(index if index >= 0 else 0)
         self.preset_combo.blockSignals(False)
@@ -246,13 +247,13 @@ class StrategyRequestEditor(QGroupBox):
     def save_current_preset(self):
         if not self.store:
             return
-        name, ok = QInputDialog.getText(self, '전략 프리셋 저장', '프리셋 이름')
+        name, ok = QInputDialog.getText(self, '자주 쓰는 설정 저장', '설정 이름')
         cleaned = name.strip()
         if not ok or not cleaned:
             return
         preset = self.store.save_strategy_preset(self.scope, cleaned, self.build_request())
         if not preset:
-            QMessageBox.warning(self, '프리셋 저장', '프리셋을 저장할 수 없습니다.')
+            QMessageBox.warning(self, '설정 저장', '설정을 저장할 수 없습니다.')
             return
         self.reload_presets()
         index = self.preset_combo.findData(str(preset.get('id') or ''))
@@ -273,7 +274,7 @@ class StrategyRequestEditor(QGroupBox):
         preset = self._get_selected_preset()
         if not preset:
             return
-        result = QMessageBox.question(self, '프리셋 삭제', f"'{preset.get('name')}' 프리셋을 삭제할까요?")
+        result = QMessageBox.question(self, '설정 삭제', f"'{preset.get('name')}' 설정을 삭제할까요?")
         if result != QMessageBox.StandardButton.Yes:
             return
         if self.store.delete_strategy_preset(str(preset.get('id') or '')):

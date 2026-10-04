@@ -95,37 +95,37 @@ class SettingsPage(QWidget):
         layout.addWidget(self.health_label)
         layout.addWidget(self.sync_label)
 
-        proxy_group = QGroupBox('네트워크')
+        proxy_group = QGroupBox('인터넷 연결(회사·학교망)')
         proxy_layout = QHBoxLayout(proxy_group)
         self.proxy_input = QLineEdit()
-        self.proxy_input.setPlaceholderText('http://127.0.0.1:8080 또는 비워두기')
+        self.proxy_input.setPlaceholderText('필요할 때만 입력 (예: http://127.0.0.1:8080)')
         proxy_layout.addWidget(self.proxy_input, 1)
-        self.proxy_save_btn = QPushButton('프록시 저장')
+        self.proxy_save_btn = QPushButton('저장')
         self.proxy_save_btn.clicked.connect(self._save_proxy)
         proxy_layout.addWidget(self.proxy_save_btn)
         layout.addWidget(proxy_group)
 
         alert_group = QGroupBox('알림 설정')
         alert_layout = QVBoxLayout(alert_group)
-        self.enable_in_app_chk = QCheckBox('인앱 알림 사용')
+        self.enable_in_app_chk = QCheckBox('앱에서 알리기')
         self.enable_in_app_chk.toggled.connect(self._save_alert_prefs)
         alert_layout.addWidget(self.enable_in_app_chk)
-        self.notify_new_result_chk = QCheckBox('새 최신 회차 반영 시 알림')
+        self.notify_new_result_chk = QCheckBox('새 당첨 결과가 나오면 알리기')
         self.notify_new_result_chk.toggled.connect(self._save_alert_prefs)
         alert_layout.addWidget(self.notify_new_result_chk)
-        self.system_notification_chk = QCheckBox('시스템 알림 사용 (미지원)')
+        self.system_notification_chk = QCheckBox('PC 알림으로 받기(준비 중)')
         self.system_notification_chk.setEnabled(False)
         alert_layout.addWidget(self.system_notification_chk)
         layout.addWidget(alert_group)
 
         sync_actions = QHBoxLayout()
-        self.sync_btn = QPushButton('지금 동기화')
+        self.sync_btn = QPushButton('최신 정보 가져오기')
         self.sync_btn.clicked.connect(self.syncRequested.emit)
         sync_actions.addWidget(self.sync_btn)
-        self.full_repair_btn = QPushButton('전체 무결성 검사/복구')
+        self.full_repair_btn = QPushButton('빠진 회차 모두 채우기')
         self.full_repair_btn.clicked.connect(self.fullRepairRequested.emit)
         sync_actions.addWidget(self.full_repair_btn)
-        self.cancel_btn = QPushButton('동기화 취소')
+        self.cancel_btn = QPushButton('가져오기 중단')
         self.cancel_btn.clicked.connect(self.syncCancelRequested.emit)
         sync_actions.addWidget(self.cancel_btn)
         sync_actions.addStretch()
@@ -134,13 +134,17 @@ class SettingsPage(QWidget):
         self.sync_progress.setTextVisible(True)
         layout.addWidget(self.sync_progress)
 
-        self.theme_btn = QPushButton('라이트/다크 전환')
+        self.theme_btn = QPushButton('밝기 바꾸기')
         self.theme_btn.clicked.connect(self.app_window.toggle_theme)
         layout.addWidget(self.theme_btn)
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         layout.addWidget(self.log, 1)
         self.set_sync_in_progress(False)
+
+    @staticmethod
+    def _data_state_label(availability: Any) -> str:
+        return {'full': '준비됨', 'partial': '더 필요함', 'none': '없음'}.get(str(availability or ''), '확인 중')
 
     def refresh_status(self):
         self._is_refreshing = True
@@ -151,18 +155,19 @@ class SettingsPage(QWidget):
         self.health_label.setText(
             "\n".join(
                 [
-                    f"로또 데이터 상태: {health.get('availability')} | 최신 회차 {health.get('latestDrawNo')} | {health.get('message') or health.get('source')}",
-                    f"연금복권 데이터 상태: {pension_health.get('availability')} | 최신 회차 {pension_health.get('latestDrawNo')} | {pension_health.get('message') or pension_health.get('source')}",
+                    f"로또: {self._data_state_label(health.get('availability'))} · 최신 {health.get('latestDrawNo') or '-'}회 · {health.get('message') or '당첨 정보를 확인하는 중...'}",
+                    f"연금복권: {self._data_state_label(pension_health.get('availability'))} · 최신 {pension_health.get('latestDrawNo') or '-'}회 · {pension_health.get('message') or '연금복권 정보를 확인하는 중...'}",
                 ]
             )
         )
+        last_success = sync_meta.get('lastSuccessAt') or '-'
+        last_success_draw = sync_meta.get('lastSuccessDrawNo') or 0
+        last_notice = sync_meta.get('lastWarningMessage') or sync_meta.get('lastFailureMessage') or '-'
         self.sync_label.setText(
             "\n".join(
                 [
-                    f"동기화 모드: {sync_meta.get('mode') or '-'} | 소스: {sync_meta.get('currentSource') or '-'}",
-                    f"마지막 성공: {sync_meta.get('lastSuccessAt') or '-'} ({sync_meta.get('lastSuccessDrawNo') or 0}회)",
-                    f"마지막 경고: {sync_meta.get('lastWarningAt') or '-'} | {sync_meta.get('lastWarningMessage') or '-'}",
-                    f"마지막 실패: {sync_meta.get('lastFailureAt') or '-'} | {sync_meta.get('lastFailureMessage') or '-'}",
+                    f"마지막으로 가져온 정보: {last_success}" + (f" ({last_success_draw}회)" if last_success_draw else ''),
+                    f"최근 안내: {last_notice}",
                 ]
             )
         )

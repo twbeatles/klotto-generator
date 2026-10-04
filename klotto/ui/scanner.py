@@ -79,7 +79,7 @@ class QRCodeScannerDialog(QDialog):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("📷 QR 코드 스캔")
+        self.setWindowTitle("QR 코드로 확인")
         self.setFixedSize(600, 500)
         
         self.scanned_data = None
@@ -92,8 +92,8 @@ class QRCodeScannerDialog(QDialog):
             self._disable_scanner_controls()
             QMessageBox.critical(
                 self,
-                "의존성 누락",
-                "QR 스캔 기능에 필요한 라이브러리가 없습니다.\n"
+                "추가 기능 필요",
+                "QR 확인에 필요한 추가 기능을 먼저 설치해주세요.\n"
                 "pip install -r requirements-optional.txt"
             )
     
@@ -115,11 +115,11 @@ class QRCodeScannerDialog(QDialog):
         # Controls
         controls = QHBoxLayout()
         
-        self.cam_btn = QPushButton("📷 카메라 시작")
+        self.cam_btn = QPushButton("카메라 시작")
         self.cam_btn.clicked.connect(self._toggle_camera)
         controls.addWidget(self.cam_btn)
         
-        self.file_btn = QPushButton("📂 이미지 불러오기")
+        self.file_btn = QPushButton("이미지 불러오기")
         self.file_btn.clicked.connect(self._load_image)
         controls.addWidget(self.file_btn)
         
@@ -148,7 +148,7 @@ class QRCodeScannerDialog(QDialog):
     def _disable_scanner_controls(self):
         self.cam_btn.setEnabled(False)
         self.file_btn.setEnabled(False)
-        self.status_label.setText("스캔 기능 비활성화: 필수 라이브러리 없음")
+        self.status_label.setText("지금은 QR 확인을 쓸 수 없어요 (추가 기능 없음)")
 
     def _apply_theme(self):
         t = ThemeManager.get_theme()
@@ -171,18 +171,18 @@ class QRCodeScannerDialog(QDialog):
 
     def _toggle_camera(self):
         if not self._requirements_ok():
-            QMessageBox.warning(self, "기능 비활성화", "QR 스캔 의존성이 설치되지 않았습니다.")
+            QMessageBox.warning(self, "쓸 수 없어요", "QR 확인에 필요한 추가 기능이 설치되지 않았습니다.")
             return
 
         if self.camera_worker and self.camera_worker.isRunning():
             self.camera_worker.stop()
-            self.cam_btn.setText("📷 카메라 시작")
+            self.cam_btn.setText("카메라 시작")
             self.viewfinder.setText("카메라 중지됨")
         else:
             self.camera_worker = CameraWorker()
             self.camera_worker.image_data.connect(self._update_frame)
             self.camera_worker.start()
-            self.cam_btn.setText("⏹ 카메라 중지")
+            self.cam_btn.setText("카메라 중지")
 
     def _update_frame(self, frame):
         if not HAS_CV2 or cv2 is None:
@@ -223,19 +223,19 @@ class QRCodeScannerDialog(QDialog):
                 self._handle_result(data)
                 if self.camera_worker:
                     self.camera_worker.stop()
-                    self.cam_btn.setText("📷 카메라 시작")
+                    self.cam_btn.setText("카메라 시작")
                 break
             self.status_label.setText("로또 QR 코드가 아닙니다. 동행복권 QR을 비춰주세요.")
 
     def _load_image(self):
         if not self._requirements_ok():
-            QMessageBox.warning(self, "기능 비활성화", "QR 스캔 의존성이 설치되지 않았습니다.")
+            QMessageBox.warning(self, "쓸 수 없어요", "QR 확인에 필요한 추가 기능이 설치되지 않았습니다.")
             return
 
         fname, _ = QFileDialog.getOpenFileName(self, '이미지 열기', '', "Image files (*.jpg *.png *.jpeg)")
         if fname:
             if cv2 is None:
-                QMessageBox.warning(self, "오류", "OpenCV를 사용할 수 없습니다.")
+                QMessageBox.warning(self, "오류", "카메라 기능을 쓸 수 없어요.")
                 return
 
             frame = cv2.imread(fname)
@@ -245,10 +245,10 @@ class QRCodeScannerDialog(QDialog):
                 # Decode
                 self._decode_frame(frame)
             else:
-                QMessageBox.warning(self, "오류", "이미지를 불러올 수 없습니다.")
+                QMessageBox.warning(self, "오류", "이미지를 열 수 없어요.")
 
     def _handle_result(self, url):
-        self.status_label.setText("QR 코드 감지됨! 분석 중...")
+        self.status_label.setText("QR을 찾았어요. 분석 중...")
         try:
             result = parse_lotto_qr_url(url)
             self.scanned_data = result
@@ -261,17 +261,17 @@ class QRCodeScannerDialog(QDialog):
             msg += f"게임 수: {len(parsed_sets)}\n"
             skipped = int(result.get('skipped') or 0)
             if skipped:
-                msg += f"제외된 게임: {skipped}개 (형식 오류)\n"
+                msg += f"제외된 게임: {skipped}개 (읽기 어려움)\n"
             msg += "\n"
             msg += "이 번호로 당첨 확인을 진행하시겠습니까?"
             
-            reply = QMessageBox.question(self, "스캔 완료", msg, 
+            reply = QMessageBox.question(self, "확인하기", msg, 
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             
             if reply == QMessageBox.StandardButton.Yes:
                 self.accept()
             else:
-                self.status_label.setText("스캔 취소됨. 다시 시도하세요.")
+                self.status_label.setText("취소했어요. 다시 시도하세요.")
                 if self.camera_worker and not self.camera_worker.isRunning():
                     self.camera_worker.start()
             
