@@ -72,6 +72,60 @@ def test_full_repair_reports_warning_when_some_draws_fail(monkeypatch: pytest.Mo
     assert summary['status'] == 'warning'
 
 
+def test_sync_aborts_when_existing_db_is_unreadable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / 'broken.db'
+    db_path.write_bytes(b'not a sqlite file')
+    monkeypatch.setattr(sync_service, 'estimate_latest_draw', lambda: 5)
+
+    worker = LottoSyncWorker(db_path, recent_window=2, mode='standard', historical_batch_size=10)
+    results: list[dict[str, Any]] = []
+    errors: list[str] = []
+    worker.finished.connect(lambda payload: results.append(payload))
+    worker.error.connect(lambda message: errors.append(message))
+    worker.run()
+
+    assert len(errors) == 1
+    assert results == []
+
+
+def test_fetch_draw_retries_once_after_transient_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / 'lotto.db'
+    _create_db(db_path, [1])
+    calls = {'count': 0}
+
+    def _flaky_fetch(draw_no: int, *, proxy_url: str = ''):
+        calls['count'] += 1
+        if calls['count'] == 1:
+            raise TimeoutError('transient')
+        return (
+            '{"data": {"list": [{"ltEpsd": 2, "ltRflYmd": "20260402", "tm1WnNo": 1, '
+            '"tm2WnNo": 2, "tm3WnNo": 3, "tm4WnNo": 4, "tm5WnNo": 5, "tm6WnNo": 6, '
+            '"bnsWnNo": 7, "rnk1WnAmt": 100, "rnk1WnNope": 1, "rlvtEpsdSumNtslAmt": 200}]}}'
+        )
+
+    monkeypatch.setattr(sync_service, 'fetch_lotto_api_text', _flaky_fetch)
+    worker = LottoSyncWorker(db_path, recent_window=1, mode='standard', historical_batch_size=10)
+
+    assert worker._fetch_draw(2) is not None
+    assert calls['count'] == 2
+
+
+def test_sync_worker_emits_progress_per_draw(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / 'lotto.db'
+    _create_db(db_path, [1, 2])
+    monkeypatch.setattr(sync_service, 'estimate_latest_draw', lambda: 4)
+
+    worker = LottoSyncWorker(db_path, recent_window=1, mode='standard', historical_batch_size=10)
+    monkeypatch.setattr(worker, '_fetch_draw', lambda draw_no: _record(draw_no))
+    progress: list[tuple[int, int]] = []
+    worker.progress.connect(lambda done, total: progress.append((done, total)))
+
+    summary = _run_worker(worker)
+
+    assert summary['attemptedDraws'] == [3, 4]
+    assert progress == [(1, 2), (2, 2)]
+
+
 def test_sync_worker_emits_cancelled_status(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     db_path = tmp_path / 'lotto.db'
     _create_db(db_path, [1])

@@ -37,7 +37,17 @@ class HistoryStoreMixin(StoreAPI):
         return {'numbers': numbers, 'date': str(raw_date)}
 
     def merge_history_entries(self, existing: Sequence[Any], incoming: Sequence[Any]) -> List[Dict[str, Any]]:
-        merged = [entry for entry in (self.normalize_stored_number_entry(item) for item in [*(existing or []), *(incoming or [])]) if entry]
+        merged: List[Dict[str, Any]] = []
+        seen: set[tuple[tuple[int, ...], str]] = set()
+        for item in [*(existing or []), *(incoming or [])]:
+            entry = self.normalize_stored_number_entry(item)
+            if not entry:
+                continue
+            key = (tuple(entry['numbers']), str(entry.get('date') or ''))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(entry)
         merged.sort(key=lambda item: str(item.get('date') or ''), reverse=True)
         max_history = int(APP_CONFIG['MAX_HISTORY'])
         return merged[:max_history]

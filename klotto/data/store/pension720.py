@@ -13,7 +13,11 @@ from klotto.core.pension720_engine import normalize_pension720_request
 from klotto.core.pension720_strategy_catalog import create_default_pension720_strategy_request
 from klotto.core.strategy_catalog import create_default_strategy_request
 from klotto.core.strategy_filters import sanitize_filters
-from klotto.data.pension720 import normalize_six_digits
+from klotto.data.pension720 import (
+    evaluate_pension720_ticket,
+    normalize_pension720_stats,
+    normalize_six_digits,
+)
 from klotto.data.store_utils import load_json_data, save_json_atomic
 from klotto.logging import logger
 from klotto.net.http import normalize_proxy_url
@@ -22,6 +26,51 @@ from klotto.data.store.api import StoreAPI
 
 
 class Pension720StoreMixin(StoreAPI):
+    def settle_pension720_ticket_if_possible(
+        self, ticket: Dict[str, Any], stats: Sequence[Dict[str, Any]]
+    ) -> bool:
+        if not ticket or ticket.get('checked'):
+            return False
+        try:
+            target_draw_no = int(ticket.get('targetDrawNo') or 0)
+        except (TypeError, ValueError):
+            return False
+        if target_draw_no <= 0 or not stats:
+            return False
+        normalized_stats = normalize_pension720_stats(list(stats))
+        if not normalized_stats:
+            return False
+        latest_draw_no = max(int(row.get('draw_no', 0)) for row in normalized_stats)
+        if target_draw_no > latest_draw_no:
+            return False
+        draw = next(
+            (row for row in normalized_stats if int(row.get('draw_no', 0)) == target_draw_no),
+            None,
+        )
+        if not draw:
+            return False
+        result = evaluate_pension720_ticket(ticket, draw)
+        if not result:
+            return False
+        ticket['checked'] = {
+            'drawNo': target_draw_no,
+            'rank': result.get('rank', 0),
+            'label': str(result.get('label') or ''),
+            'checkedAt': dt.datetime.now().isoformat(),
+        }
+        return True
+
+    def settle_pension720_tickets_if_possible(
+        self, tickets: Sequence[Dict[str, Any]], stats: Sequence[Dict[str, Any]]
+    ) -> int:
+        settled = 0
+        for ticket in tickets or []:
+            if isinstance(ticket, dict) and self.settle_pension720_ticket_if_possible(ticket, stats):
+                settled += 1
+        if settled:
+            self.save()
+        return settled
+
     def add_pension720_ticket(self, raw: Dict[str, Any], *, save: bool = True) -> Dict[str, Any]:
         source = raw or {}
         ticket = self.normalize_pension720_ticket({**source, 'source': source.get('source') or 'recommendation'})

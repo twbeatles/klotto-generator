@@ -349,6 +349,156 @@ def test_import_backup_tolerates_malformed_values(configured_paths: dict[str, Pa
     assert store.state['generatorOptions']['check_consecutive'] is False
 
 
+def test_corrupt_app_state_is_preserved_and_flagged(configured_paths: dict[str, Path]):
+    raw = '{broken json,,,'
+    configured_paths['app_state'].parent.mkdir(parents=True, exist_ok=True)
+    configured_paths['app_state'].write_text(raw, encoding='utf-8')
+
+    store = AppStateStore(configured_paths['app_state'])
+
+    assert store.state['favorites'] == []
+    backups = list(configured_paths['app_state'].parent.glob('app_state.corrupt-*.json'))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding='utf-8') == raw
+    assert store.state_load_issue
+    # A fresh, valid state file now exists at the original path.
+    json.loads(configured_paths['app_state'].read_text(encoding='utf-8'))
+
+
+def test_valid_app_state_has_no_load_issue(configured_paths: dict[str, Path]):
+    _write_json(configured_paths['app_state'], {'favorites': []})
+
+    store = AppStateStore(configured_paths['app_state'])
+
+    assert store.state_load_issue is None
+
+
+def test_history_merge_dedupes_identical_entries(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+    entry = {'numbers': [1, 2, 3, 4, 5, 6], 'date': '2026-04-01T10:00:00'}
+
+    merged = store.merge_history_entries([entry], [dict(entry)])
+
+    assert len(merged) == 1
+
+
+def test_import_backup_twice_keeps_history_stable(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+    payload = {
+        'state': {
+            'history': [{'numbers': [1, 2, 3, 4, 5, 6], 'date': '2026-04-01T10:00:00'}],
+        }
+    }
+
+    store.import_backup_payload(payload, mode='merge')
+    first = len(store.state['history'])
+    store.import_backup_payload(payload, mode='merge')
+
+    assert first == 1
+    assert len(store.state['history']) == 1
+
+
+def test_file_lock_serializes_concurrent_saves(tmp_path: Path):
+    import threading
+
+    from klotto.data.store_utils import _lock_path_for, save_json_atomic
+
+    path = tmp_path / 'data.json'
+    errors: list[BaseException] = []
+
+    def _save(value: int) -> None:
+        try:
+            assert save_json_atomic(path, {'i': value}, 'probe') is True
+        except BaseException as exc:  # noqa: BLE001 - collected for assertion
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_save, args=(index,)) for index in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert not errors
+    assert json.loads(path.read_text(encoding='utf-8'))['i'] in range(8)
+    assert not _lock_path_for(path).exists()
+
+
+def test_stale_lock_is_broken(tmp_path: Path):
+    import os
+    import time
+
+    from klotto.data.store_utils import _lock_path_for, save_json_atomic
+
+    path = tmp_path / 'data.json'
+    lock = _lock_path_for(path)
+    lock.write_text('999999', encoding='utf-8')
+    stale = time.time() - 120
+    os.utime(lock, (stale, stale))
+
+    assert save_json_atomic(path, {'ok': True}, 'probe') is True
+    assert json.loads(path.read_text(encoding='utf-8')) == {'ok': True}
+    assert not lock.exists()
+
+
+def test_campaign_size_error_flags_over_cap(configured_paths: dict[str, Path]):
+    from klotto.data.store.campaigns import campaign_size_error
+
+    assert campaign_size_error(4, 5) is None
+    assert campaign_size_error(15, 20) is None
+    assert campaign_size_error(16, 20) is not None
+    assert campaign_size_error(24, 20) is not None
+
+
+def test_pension720_ticket_settles_and_keeps_checked(configured_paths: dict[str, Path]):
+    from klotto.data.pension720 import normalize_pension720_stats
+
+    store = AppStateStore(configured_paths['app_state'])
+    stats = normalize_pension720_stats(
+        [
+            {
+                'draw_no': 3,
+                'date': '2026-05-14',
+                'group': 2,
+                'digits': [5, 3, 7, 5, 3, 0],
+                'number': '537530',
+                'bonus_digits': [3, 5, 8, 1, 2, 7],
+                'bonus_number': '358127',
+            }
+        ]
+    )
+    store.add_pension720_ticket(
+        {'group': 2, 'number': '537530', 'source': 'recommendation', 'targetDrawNo': 3}
+    )
+    future = store.add_pension720_ticket(
+        {'group': 2, 'number': '000000', 'source': 'recommendation', 'targetDrawNo': 99}
+    )
+
+    settled = store.settle_pension720_tickets_if_possible(store.state['pension720Tickets'], stats)
+
+    assert settled == 1
+    checked = store.state['pension720Tickets'][1]['checked']
+    assert checked['drawNo'] == 3
+    assert checked['rank'] == 1
+    assert future['ticket']['checked'] is None
+    # Checked state survives a normalize round-trip (backup merge path).
+    renormalized = store.normalize_pension720_ticket(store.state['pension720Tickets'][1])
+    assert renormalized is not None
+    assert renormalized['checked'] == checked
+
+
+def test_campaign_entry_rejects_over_total_ticket_cap(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+
+    assert (
+        store.normalize_campaign_entry({'startDrawNo': 1000, 'weeks': 24, 'setsPerWeek': 20})
+        is None
+    )
+    assert (
+        store.normalize_pension720_campaign({'startDrawNo': 100, 'weeks': 24, 'setsPerDraw': 20})
+        is None
+    )
+
+
 def test_pension720_state_dedupes_campaigns_and_backup_v5(configured_paths: dict[str, Path]):
     store = AppStateStore(configured_paths['app_state'])
     request = store.normalize_pension720_strategy_request(

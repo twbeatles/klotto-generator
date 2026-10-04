@@ -3,6 +3,7 @@ import csv
 from typing import Any, List, Dict, Optional
 
 from klotto.core.lotto_rules import normalize_numbers, normalize_positive_int
+from klotto.data.pension720 import protect_spreadsheet_formula
 from klotto.logging import logger
 
 # ============================================================
@@ -36,21 +37,21 @@ class DataExporter:
                     writer.writerow(["번호1", "번호2", "번호3", "번호4", "번호5", "번호6", "메모", "생성일"])
                     for item in data:
                         nums = DataExporter._normalize_numbers(item.get('numbers', []))
-                        memo = item.get('memo', '')
-                        created = item.get('created_at', '')
+                        memo = protect_spreadsheet_formula(item.get('memo', ''))
+                        created = protect_spreadsheet_formula(item.get('created_at', ''))
                         writer.writerow([*nums, memo, created])
                 elif data_type == 'history':
                     writer.writerow(["번호1", "번호2", "번호3", "번호4", "번호5", "번호6", "생성일"])
                     for item in data:
                         nums = DataExporter._normalize_numbers(item.get('numbers', []))
-                        created = item.get('created_at', '')
+                        created = protect_spreadsheet_formula(item.get('created_at', ''))
                         writer.writerow([*nums, created])
                 elif data_type == 'winning_stats':
                     writer.writerow(["회차", "번호1", "번호2", "번호3", "번호4", "번호5", "번호6", "보너스"])
                     for item in data:
-                        draw_no = item.get('draw_no', '')
+                        draw_no = protect_spreadsheet_formula(item.get('draw_no', ''))
                         nums = DataExporter._normalize_numbers(item.get('numbers', []))
-                        bonus = item.get('bonus', '')
+                        bonus = protect_spreadsheet_formula(item.get('bonus', ''))
                         writer.writerow([draw_no, *nums, bonus])
             
             logger.info(f"Exported {len(data)} items to {filepath}")

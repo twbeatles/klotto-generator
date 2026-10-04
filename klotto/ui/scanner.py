@@ -20,6 +20,19 @@ from PyQt6.QtGui import QImage, QPixmap
 from klotto.utils import logger, ThemeManager
 from klotto.qr_utils import parse_lotto_qr_url
 
+
+def decode_qr_text(raw_data: bytes) -> Optional[str]:
+    """pyzbar 바이트 페이로드를 텍스트로 디코딩한다. 실패하면 None."""
+    try:
+        return bytes(raw_data).decode('utf-8')
+    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+        logger.error(f"Failed to decode QR payload bytes: {exc}")
+        return None
+
+
+def is_lotto_qr_url(text: str) -> bool:
+    return 'dhlottery.co.kr' in (text or '')
+
 # Try importing pyzbar
 decode: Optional[Callable[[Any], Any]] = None
 try:
@@ -196,14 +209,23 @@ class QRCodeScannerDialog(QDialog):
             logger.error(f"Failed to decode QR frame: {e}")
             return
 
-        for obj in decoded_objects:
-            data = obj.data.decode('utf-8')
-            if 'dhlottery.co.kr' in data:
+        for obj in decoded_objects or []:
+            try:
+                raw = obj.data
+            except Exception as e:
+                logger.error(f"Failed to read QR object data: {e}")
+                continue
+            data = decode_qr_text(raw)
+            if data is None:
+                self.status_label.setText("QR 데이터를 읽지 못했습니다. 다시 비춰주세요.")
+                continue
+            if is_lotto_qr_url(data):
                 self._handle_result(data)
                 if self.camera_worker:
                     self.camera_worker.stop()
                     self.cam_btn.setText("📷 카메라 시작")
                 break
+            self.status_label.setText("로또 QR 코드가 아닙니다. 동행복권 QR을 비춰주세요.")
 
     def _load_image(self):
         if not self._requirements_ok():
@@ -236,7 +258,11 @@ class QRCodeScannerDialog(QDialog):
             
             # Show summary
             msg = f"회차: {draw_no}회\n"
-            msg += f"게임 수: {len(parsed_sets)}\n\n"
+            msg += f"게임 수: {len(parsed_sets)}\n"
+            skipped = int(result.get('skipped') or 0)
+            if skipped:
+                msg += f"제외된 게임: {skipped}개 (형식 오류)\n"
+            msg += "\n"
             msg += "이 번호로 당첨 확인을 진행하시겠습니까?"
             
             reply = QMessageBox.question(self, "스캔 완료", msg, 

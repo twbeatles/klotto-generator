@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QSplitter,
@@ -79,6 +80,7 @@ if TYPE_CHECKING:
 class SettingsPage(QWidget):
     syncRequested = pyqtSignal()
     fullRepairRequested = pyqtSignal()
+    syncCancelRequested = pyqtSignal()
 
     def __init__(self, app_window: 'LottoApp'):
         super().__init__(app_window)
@@ -123,8 +125,14 @@ class SettingsPage(QWidget):
         self.full_repair_btn = QPushButton('전체 무결성 검사/복구')
         self.full_repair_btn.clicked.connect(self.fullRepairRequested.emit)
         sync_actions.addWidget(self.full_repair_btn)
+        self.cancel_btn = QPushButton('동기화 취소')
+        self.cancel_btn.clicked.connect(self.syncCancelRequested.emit)
+        sync_actions.addWidget(self.cancel_btn)
         sync_actions.addStretch()
         layout.addLayout(sync_actions)
+        self.sync_progress = QProgressBar()
+        self.sync_progress.setTextVisible(True)
+        layout.addWidget(self.sync_progress)
 
         self.theme_btn = QPushButton('라이트/다크 전환')
         self.theme_btn.clicked.connect(self.app_window.toggle_theme)
@@ -132,6 +140,7 @@ class SettingsPage(QWidget):
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         layout.addWidget(self.log, 1)
+        self.set_sync_in_progress(False)
 
     def refresh_status(self):
         self._is_refreshing = True
@@ -169,6 +178,17 @@ class SettingsPage(QWidget):
     def set_sync_in_progress(self, busy: bool):
         self.sync_btn.setEnabled(not busy)
         self.full_repair_btn.setEnabled(not busy)
+        self.cancel_btn.setEnabled(busy)
+        if busy:
+            self.sync_progress.setValue(0)
+            self.sync_progress.setVisible(True)
+        else:
+            self.sync_progress.setVisible(False)
+
+    def set_sync_progress(self, done: int, total: int) -> None:
+        self.sync_progress.setVisible(True)
+        self.sync_progress.setMaximum(max(1, int(total)))
+        self.sync_progress.setValue(max(0, int(done)))
 
     def _save_proxy(self):
         self.app_window.save_proxy_url(self.proxy_input.text())

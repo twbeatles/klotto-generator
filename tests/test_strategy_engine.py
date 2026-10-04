@@ -101,6 +101,7 @@ def test_parse_lotto_qr_url_validates_draw_and_numbers():
     assert payload == {
         'draw_no': 123,
         'sets': [[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]],
+        'skipped': 0,
     }
 
     with pytest.raises(ValueError):

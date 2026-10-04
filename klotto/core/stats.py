@@ -1,6 +1,5 @@
 import json
 import datetime
-import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, cast
@@ -11,6 +10,8 @@ from klotto.logging import logger
 
 WinningRecord = Dict[str, Any]
 UpsertStatus = str
+
+DB_LOCK_TIMEOUT_S = 30.0
 
 
 # ============================================================
@@ -202,7 +203,7 @@ class WinningStatsManager:
     def _load_from_db(self) -> bool:
         """SQLite DB에서 데이터 로드"""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -244,7 +245,7 @@ class WinningStatsManager:
             return None
 
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -290,7 +291,7 @@ class WinningStatsManager:
 
         try:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
                 self._ensure_db_schema(conn)
                 cursor = conn.cursor()
                 cursor.execute(
@@ -391,23 +392,9 @@ class WinningStatsManager:
         if not self.stats_file:
             return
 
-        temp_file: Optional[Path] = None
-        try:
-            self.stats_file.parent.mkdir(parents=True, exist_ok=True)
-            temp_file = self.stats_file.with_suffix(".tmp")
-            with open(temp_file, "w", encoding="utf-8") as file:
-                json.dump(self.winning_data, file, ensure_ascii=False, indent=2)
-            if self.stats_file.exists():
-                os.replace(temp_file, self.stats_file)
-            else:
-                os.rename(temp_file, self.stats_file)
-        except Exception as exc:
-            logger.error("Failed to save winning stats: %s", exc)
-            try:
-                if temp_file and temp_file.exists():
-                    temp_file.unlink()
-            except Exception:
-                pass
+        from klotto.data.store_utils import save_json_atomic
+
+        save_json_atomic(self.stats_file, self.winning_data, "winning_stats")
 
     def upsert_winning_data(
         self,

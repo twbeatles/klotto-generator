@@ -59,6 +59,7 @@ from klotto.data.pension720 import (
     resolve_pension720_ticket_check,
 )
 from klotto.data.app_state import get_shared_store
+from klotto.data.store.campaigns import campaign_size_error
 from klotto.data.exporter import DataExporter
 from klotto.data.favorites import FavoritesManager
 from klotto.data.history import HistoryManager
@@ -268,8 +269,8 @@ class Pension720Page(QWidget):
         saved_layout.addLayout(saved_actions)
 
         saved_tables = QHBoxLayout()
-        self.saved_table = QTableWidget(0, 6)
-        self.saved_table.setHorizontalHeaderLabels(['조', '번호', '대상 회차', '출처', '메모', '생성일'])
+        self.saved_table = QTableWidget(0, 7)
+        self.saved_table.setHorizontalHeaderLabels(['조', '번호', '대상 회차', '출처', '메모', '생성일', '상태'])
         self.saved_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.saved_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         saved_tables.addWidget(self.saved_table)
@@ -529,6 +530,13 @@ class Pension720Page(QWidget):
         thread.finished.connect(lambda: self.refresh_btn.setEnabled(True))
         thread.start()
 
+    def _settle_saved_pension_tickets(self) -> int:
+        if not self.pension720_stats:
+            return 0
+        return self.app_window.store.settle_pension720_tickets_if_possible(
+            self.app_window.store.state['pension720Tickets'], self.pension720_stats
+        )
+
     def _on_official_data_ready(self, rows: List[Dict[str, Any]]):
         if rows:
             self.pension720_stats = rows
@@ -540,6 +548,7 @@ class Pension720Page(QWidget):
                 message='동행복권 공식 연금복권 데이터를 사용 중입니다.',
                 updatedAt=dt.datetime.now().isoformat(),
             )
+            self._settle_saved_pension_tickets()
             self.reset_campaign_defaults(force=False)
         self.refresh_view_state()
         self.app_window.show_status('연금복권 데이터를 새로고침했습니다.' if rows else '연금복권 데이터를 확인하지 못했습니다.', 4000)
@@ -670,6 +679,7 @@ class Pension720Page(QWidget):
                 'memo': str(get_pension720_strategy_meta(request.get('strategyId'))['label']),
             }
         )
+        self._settle_saved_pension_tickets()
         self.refresh_view_state()
         self.app_window.show_status('연금복권 번호를 저장했습니다.' if result.get('inserted') else '이미 저장된 연금복권 번호입니다.', 4000)
 
@@ -694,6 +704,7 @@ class Pension720Page(QWidget):
             for group in groups
         ]
         result = self.app_window.store.add_pension720_tickets_bulk(rows)
+        self._settle_saved_pension_tickets()
         self.refresh_view_state()
         self.app_window.show_status(f"확장 조 {result.get('inserted', 0)}개를 저장했습니다.", 4000)
 
@@ -705,6 +716,10 @@ class Pension720Page(QWidget):
         start_draw = self.campaign_start_spin.value()
         weeks = self.campaign_weeks_spin.value()
         sets_per_draw = self.campaign_sets_spin.value()
+        size_error = campaign_size_error(weeks, sets_per_draw)
+        if size_error:
+            QMessageBox.warning(self, '연금복권 캠페인', size_error)
+            return
 
         def task() -> Dict[str, Any]:
             engine = Pension720Engine(self.pension720_stats)
@@ -746,20 +761,32 @@ class Pension720Page(QWidget):
         if not tickets:
             QMessageBox.information(self, '연금복권 캠페인', '생성된 번호가 없습니다.')
             return
+        campaign = {
+            'id': payload['campaignId'],
+            'name': f"{payload['startDrawNo']}회 시작 {payload['weeks']}회",
+            'startDrawNo': payload['startDrawNo'],
+            'weeks': payload['weeks'],
+            'setsPerDraw': payload['setsPerDraw'],
+            'strategyRequest': payload['request'],
+        }
+        size_error = campaign_size_error(payload['weeks'], payload['setsPerDraw'])
+        if size_error or self.app_window.store.normalize_pension720_campaign(campaign) is None:
+            QMessageBox.warning(self, '연금복권 캠페인', size_error or '캠페인 정보를 저장할 수 없어 번호를 저장하지 않았습니다.')
+            return
         result = self.app_window.store.add_pension720_tickets_bulk(tickets)
         if result.get('inserted', 0) > 0:
-            self.app_window.store.add_pension720_campaign(
-                {
-                    'id': payload['campaignId'],
-                    'name': f"{payload['startDrawNo']}회 시작 {payload['weeks']}회",
-                    'startDrawNo': payload['startDrawNo'],
-                    'weeks': payload['weeks'],
-                    'setsPerDraw': payload['setsPerDraw'],
-                    'strategyRequest': payload['request'],
-                }
-            )
+            self.app_window.store.add_pension720_campaign(campaign)
+        self._settle_saved_pension_tickets()
         self.refresh_view_state()
         self.app_window.show_status(f"연금복권 캠페인 저장 번호 {result.get('inserted', 0)}개 반영", 4000)
+
+    @staticmethod
+    def _pension_ticket_status(ticket: Dict[str, Any]) -> str:
+        checked = ticket.get('checked') or {}
+        if checked:
+            label = str(checked.get('label') or '').strip()
+            return f"{label}({checked.get('drawNo')}회)" if label else '확인'
+        return '대기'
 
     def render_saved_tables(self):
         tickets = self.app_window.store.state['pension720Tickets']
@@ -776,6 +803,7 @@ class Pension720Page(QWidget):
                 str(ticket.get('source') or ''),
                 str(ticket.get('memo') or ''),
                 str(ticket.get('createdAt') or ''),
+                self._pension_ticket_status(ticket),
             ]
             for col, value in enumerate(values):
                 self.saved_table.setItem(row, col, QTableWidgetItem(value))

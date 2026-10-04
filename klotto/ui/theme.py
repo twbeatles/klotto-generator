@@ -319,6 +319,13 @@ class ThemeManager:
             cls._listeners.append(callback)
 
     @classmethod
+    def remove_listener(cls, callback: Callable[[], None]):
+        try:
+            cls._listeners.remove(callback)
+        except ValueError:
+            pass
+
+    @classmethod
     def get_stylesheet(cls) -> str:
         theme = cls.get_theme()
         is_dark = cls._current_theme == "dark"

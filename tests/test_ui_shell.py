@@ -657,3 +657,308 @@ def test_pension720_page_gate_and_recommendation_flow(qapp: QApplication, monkey
         assert app.pension720_page.check_table.rowCount() == 1
     finally:
         app.close()
+
+
+def _sample_winning_data() -> list[dict[str, Any]]:
+    return [
+        {'draw_no': 3, 'numbers': [1, 2, 3, 4, 5, 6], 'bonus': 7, 'date': '2026-04-01'},
+        {'draw_no': 2, 'numbers': [7, 8, 9, 10, 11, 12], 'bonus': 13, 'date': '2026-03-25'},
+        {'draw_no': 1, 'numbers': [14, 15, 16, 17, 18, 19], 'bonus': 20, 'date': '2026-03-18'},
+    ]
+
+
+def test_lotto_campaign_over_cap_blocked_before_task(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    warnings: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        number_generation_page_module.QMessageBox, 'warning', lambda *args, **_kwargs: warnings.append(args)
+    )
+    monkeypatch.setattr(
+        number_generation_page_module.QMessageBox, 'information', lambda *args, **_kwargs: None
+    )
+    try:
+        app.generator_page.campaign_weeks_spin.setValue(24)
+        app.generator_page.campaign_sets_spin.setValue(20)
+
+        app.generator_page.run_campaign_generation()
+
+        assert warnings
+        assert '300' in str(warnings[0][2])
+        assert app.generator_page._task is None
+        assert store.state['ticketBook'] == []
+        assert store.state['campaigns'] == []
+    finally:
+        app.close()
+
+
+def test_lotto_campaign_ready_rejects_oversize_payload(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    warnings: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        number_generation_page_module.QMessageBox, 'warning', lambda *args, **_kwargs: warnings.append(args)
+    )
+    monkeypatch.setattr(
+        number_generation_page_module.QMessageBox, 'information', lambda *args, **_kwargs: None
+    )
+    try:
+        app.generator_page._on_campaign_generated(
+            {
+                'tickets': [
+                    {'numbers': [1, 2, 3, 4, 5, 6], 'targetDrawNo': 4, 'source': 'generator', 'quantity': 1},
+                    {'numbers': [7, 8, 9, 10, 11, 12], 'targetDrawNo': 4, 'source': 'generator', 'quantity': 1},
+                ],
+                'startDrawNo': 4,
+                'weeks': 24,
+                'setsPerWeek': 20,
+                'request': {'strategyId': 'random_baseline', 'params': {}, 'filters': {}},
+            }
+        )
+
+        assert warnings
+        assert store.state['ticketBook'] == []
+        assert store.state['campaigns'] == []
+    finally:
+        app.close()
+
+
+def test_cancel_sync_flags_active_worker(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from klotto.core.sync_service import LottoSyncWorker as _SyncWorker
+
+    app, _store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    worker = _SyncWorker(tmp_path / 'cancel.db')
+    app._active_sync_worker = worker
+    try:
+        app.cancel_sync()
+        assert worker._is_cancelled is True
+    finally:
+        app.close()
+
+
+def test_sync_cancel_button_wires_to_worker(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from klotto.core.sync_service import LottoSyncWorker as _SyncWorker
+
+    app, _store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    worker = _SyncWorker(tmp_path / 'cancel.db')
+    app._active_sync_worker = worker
+    try:
+        assert not app.settings_page.cancel_btn.isEnabled()
+        app.settings_page.set_sync_in_progress(True)
+        assert app.settings_page.cancel_btn.isEnabled()
+        app.settings_page.cancel_btn.click()
+        assert worker._is_cancelled is True
+        app.settings_page.set_sync_progress(1, 4)
+        assert app.settings_page.sync_progress.value() == 1
+        assert app.settings_page.sync_progress.maximum() == 4
+        app.settings_page.set_sync_in_progress(False)
+        assert not app.settings_page.cancel_btn.isEnabled()
+    finally:
+        app.close()
+
+
+def test_close_cancels_running_sync_worker(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import sqlite3 as _sqlite3
+    import time as _time
+
+    from klotto.core import sync_service as _sync_service
+    from klotto.core.sync_service import LottoSyncWorker as _SyncWorker
+
+    app, _store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    db_path = tmp_path / 'close_sync.db'
+    with _sqlite3.connect(db_path) as conn:
+        conn.execute('CREATE TABLE draws (draw_no INTEGER PRIMARY KEY)')
+        conn.executemany('INSERT INTO draws (draw_no) VALUES (?)', [(1,), (2,)])
+        conn.commit()
+    monkeypatch.setattr(_sync_service, 'estimate_latest_draw', lambda: 5)
+
+    def _slow_fetch(draw_no: int):
+        _time.sleep(0.5)
+        return {
+            'draw_no': draw_no,
+            'numbers': [1, 2, 3, 4, 5, 6],
+            'bonus': 7,
+            'date': '2026-04-01',
+            'first_prize': 0,
+            'first_winners': 0,
+            'total_sales': 0,
+        }
+
+    worker = _SyncWorker(db_path, recent_window=1, mode='standard', historical_batch_size=10)
+    monkeypatch.setattr(worker, '_fetch_draw', _slow_fetch)
+    worker.start()
+    app._active_sync_worker = worker
+    try:
+        assert worker.isRunning()
+        app.close()
+        assert worker._is_cancelled is True
+        assert not worker.isRunning()
+    finally:
+        if worker.isRunning():
+            worker.cancel()
+            worker.wait(10000)
+
+
+def test_generated_shortfall_status_mentions_request(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, _store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    try:
+        app.generator_page._last_requested_count = 5
+        app.generator_page._on_generated(
+            [
+                {'numbers': [1, 2, 3, 4, 5, 6], 'score': 1.0, 'sum': 21, 'explanation': {}, 'request': {}},
+                {'numbers': [7, 8, 9, 10, 11, 12], 'score': 0.5, 'sum': 57, 'explanation': {}, 'request': {}},
+            ]
+        )
+
+        status_bar = app.statusBar()
+        assert status_bar is not None
+        assert '2' in status_bar.currentMessage()
+        assert '5' in status_bar.currentMessage()
+    finally:
+        app.close()
+
+
+def test_pension720_saved_table_shows_settled_status(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    try:
+        app.pension720_page.pension720_stats = [
+            {
+                'draw_no': 3,
+                'date': '2026-05-14',
+                'group': 2,
+                'digits': [5, 3, 7, 5, 3, 0],
+                'number': '537530',
+                'bonus_digits': [3, 5, 8, 1, 2, 7],
+                'bonus_number': '358127',
+            }
+        ]
+        store.add_pension720_ticket(
+            {'group': 2, 'number': '537530', 'source': 'recommendation', 'targetDrawNo': 3}
+        )
+        store.add_pension720_ticket(
+            {'group': 2, 'number': '000001', 'source': 'recommendation', 'targetDrawNo': 99}
+        )
+
+        settled = app.pension720_page._settle_saved_pension_tickets()
+        app.pension720_page.render_saved_tables()
+
+        assert settled == 1
+        assert app.pension720_page.saved_table.columnCount() == 7
+        statuses = []
+        for row in range(app.pension720_page.saved_table.rowCount()):
+            cell = app.pension720_page.saved_table.item(row, 6)
+            statuses.append(cell.text() if cell is not None else '')
+        assert any('1등' in status for status in statuses)
+        assert '대기' in statuses
+    finally:
+        app.close()
+
+
+def test_import_backup_writes_preimport_snapshot(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import json as _json
+
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    backup = tmp_path / 'backup.json'
+    backup.write_text(
+        _json.dumps(
+            {'state': {'history': [{'numbers': [1, 2, 3, 4, 5, 6], 'date': '2026-04-01T10:00:00'}]}},
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(
+        data_page_module.QFileDialog, 'getOpenFileName', lambda *args, **_kwargs: (str(backup), '')
+    )
+    monkeypatch.setattr(
+        data_page_module.QInputDialog,
+        'getItem',
+        lambda *args, **_kwargs: ('merge 방식으로 불러오기(권장)', True),
+    )
+    try:
+        app.data_page.import_backup()
+
+        snapshots = list((tmp_path / 'state').glob('app_state.preimport-*.json'))
+        assert len(snapshots) == 1
+        assert len(store.state['history']) == 1
+    finally:
+        app.close()
+
+
+def test_close_removes_theme_listener(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from klotto.ui.theme import ThemeManager
+
+    app, _store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    assert app.apply_theme in ThemeManager._listeners
+    app.close()
+    assert app.apply_theme not in ThemeManager._listeners
+
+
+def test_apply_theme_skips_save_when_unchanged(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    saves: list[int] = []
+    original_save = store.save
+
+    def _counting_save() -> bool:
+        saves.append(1)
+        return original_save()
+
+    monkeypatch.setattr(store, 'save', _counting_save)
+    try:
+        app.apply_theme()
+        assert saves == []
+    finally:
+        app.close()
+
+
+def test_pension720_campaign_ready_rejects_oversize_payload(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    warnings: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(
+        pension720_page_module.QMessageBox, 'warning', lambda *args, **_kwargs: warnings.append(args)
+    )
+    try:
+        app.pension720_page._on_campaign_ready(
+            {
+                'campaignId': 'p720_campaign_test',
+                'tickets': [
+                    {
+                        'group': 2,
+                        'number': '060727',
+                        'score': 1.0,
+                        'source': 'campaign',
+                        'targetDrawNo': 316,
+                        'campaignId': 'p720_campaign_test',
+                    },
+                ],
+                'request': {'strategyId': 'mixed_balance', 'params': {}, 'filters': {}},
+                'startDrawNo': 316,
+                'weeks': 24,
+                'setsPerDraw': 20,
+            }
+        )
+
+        assert warnings
+        assert store.state['pension720Tickets'] == []
+        assert store.state['pension720Campaigns'] == []
+    finally:
+        app.close()

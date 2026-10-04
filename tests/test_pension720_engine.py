@@ -4,6 +4,7 @@ from klotto.core.pension720_engine import Pension720Engine
 from klotto.data.pension720 import (
     build_pension720_ticket_csv,
     evaluate_pension720_ticket,
+    load_pension720_static_data,
     normalize_pension720_draw,
     normalize_pension720_stats,
     resolve_pension720_ticket_check,
@@ -156,3 +157,10 @@ def test_pension720_target_aware_check_and_csv_formula_escape():
     assert 'memo' in csv_text
     assert "'=1+1" in csv_text
     assert ',=1+1,' not in csv_text
+
+
+def test_load_pension720_static_data_tolerates_corrupt_file(tmp_path):
+    bad = tmp_path / 'pension720_stats.json'
+    bad.write_text('{broken', encoding='utf-8')
+
+    assert load_pension720_static_data(bad) == []

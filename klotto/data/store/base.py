@@ -3,6 +3,7 @@
 import datetime as dt
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, cast
 from uuid import uuid4
@@ -21,11 +22,14 @@ from klotto.data.store.api import StoreAPI
 
 
 class StoreBaseMixin(StoreAPI):
+    state_load_issue: Optional[str] = None
+
     def __init__(self, state_file: Optional[Path] = None):
         self.state_file = state_file or APP_CONFIG['APP_STATE_FILE']
         self.favorites_file = APP_CONFIG['FAVORITES_FILE']
         self.history_file = APP_CONFIG['HISTORY_FILE']
         self.settings_file = APP_CONFIG['SETTINGS_FILE']
+        self.state_load_issue = None
         self.state: Dict[str, Any] = self._load_state()
 
     def create_default_state(self) -> Dict[str, Any]:
@@ -106,10 +110,37 @@ class StoreBaseMixin(StoreAPI):
     def _load_state(self) -> Dict[str, Any]:
         raw = load_json_data(self.state_file, 'app_state', None)
         if isinstance(raw, dict):
+            self.state_load_issue = None
             return self.merge_state(raw)
+        if self._is_state_file_corrupt():
+            self.state_load_issue = self._preserve_corrupt_state()
+        else:
+            self.state_load_issue = None
         migrated = self._migrate_legacy_state()
         save_json_atomic(self.state_file, migrated, 'app_state')
         return migrated
+
+    def _is_state_file_corrupt(self) -> bool:
+        path = self.state_file
+        if path is None or not path.exists():
+            return False
+        try:
+            with open(path, 'r', encoding='utf-8') as file:
+                json.load(file)
+            return False
+        except Exception:
+            return True
+
+    def _preserve_corrupt_state(self) -> str:
+        timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup = self.state_file.with_name(f'{self.state_file.stem}.corrupt-{timestamp}.json')
+        try:
+            shutil.copy2(self.state_file, backup)
+            message = f'손상된 상태 파일을 보존했습니다: {backup}'
+        except Exception as exc:
+            message = f'손상된 상태 파일을 감지했으나 보존에 실패했습니다: {exc}'
+        logger.warning('Corrupt app_state detected; %s', message)
+        return message
 
     def _migrate_legacy_state(self) -> Dict[str, Any]:
         defaults = self.create_default_state()

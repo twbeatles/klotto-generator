@@ -224,9 +224,23 @@ class DataPage(QWidget):
         if not isinstance(payload, dict):
             QMessageBox.warning(self, '가져오기', '백업 파일 형식이 올바르지 않습니다.')
             return
-        self.app_window.store.import_backup_payload(payload, mode='merge', winning_data=self.app_window.stats_manager.winning_data)
+        choice, accepted = QInputDialog.getItem(
+            self,
+            '백업 가져오기',
+            '가져오기 방식',
+            ['merge 방식으로 불러오기(권장)', '덮어쓰기로 불러오기'],
+            0,
+            False,
+        )
+        if not accepted:
+            return
+        mode = 'overwrite' if str(choice).startswith('덮어쓰기') else 'merge'
+        timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
+        snapshot = Path(self.app_window.store.state_file).with_name(f'app_state.preimport-{timestamp}.json')
+        DataExporter.export_any_json(self.app_window.store.export_backup_payload(), str(snapshot))
+        self.app_window.store.import_backup_payload(payload, mode=mode, winning_data=self.app_window.stats_manager.winning_data)
         self.app_window.refresh_all_views()
-        self.app_window.show_status('백업을 merge 방식으로 불러왔습니다.', 4000)
+        self.app_window.show_status(f'백업을 {mode} 방식으로 불러왔습니다 (가져오기 전 상태: {snapshot.name}).', 4000)
 
     def export_winning_excel(self):
         filepath, _ = QFileDialog.getSaveFileName(self, '당첨 DB 엑셀 저장', 'lotto_history.xlsx', 'Excel 파일 (*.xlsx)')

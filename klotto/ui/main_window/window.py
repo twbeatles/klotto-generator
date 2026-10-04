@@ -39,6 +39,7 @@ from klotto.ui.main_window.pages.check import CheckPage
 from klotto.ui.main_window.pages.data import DataPage
 from klotto.ui.main_window.pages.number_generation import NumberGenerationPage
 from klotto.ui.main_window.pages.pension720 import Pension720Page
+from klotto.ui.main_window.task_thread import TaskThread
 from klotto.ui.main_window.pages.settings import SettingsPage
 from klotto.ui.main_window.pages.stats import StatsPage
 
@@ -56,6 +57,7 @@ class LottoApp(QMainWindow):
         self._setup_ui()
         self.refresh_data_health()
         self.refresh_all_views()
+        self._notify_state_recovery()
 
     def _setup_ui(self):
         self.setWindowTitle(f"{APP_CONFIG['APP_NAME']} v{APP_CONFIG['VERSION']}")
@@ -94,6 +96,7 @@ class LottoApp(QMainWindow):
         self.settings_page = SettingsPage(self)
         self.settings_page.syncRequested.connect(lambda: self.start_sync('standard'))
         self.settings_page.fullRepairRequested.connect(lambda: self.start_sync('full_repair'))
+        self.settings_page.syncCancelRequested.connect(self.cancel_sync)
 
         for page in [self.generator_page, self.stats_page, self.ai_page, self.backtest_page, self.pension720_page, self.check_page, self.data_page, self.settings_page]:
             self.stack.addWidget(page)
@@ -114,11 +117,22 @@ class LottoApp(QMainWindow):
 
     def apply_theme(self):
         self.setStyleSheet(ThemeManager.get_stylesheet())
-        self.store.state['theme'] = ThemeManager.get_theme_name()
-        self.store.save()
+        theme_name = ThemeManager.get_theme_name()
+        if self.store.state.get('theme') != theme_name:
+            self.store.state['theme'] = theme_name
+            self.store.save()
 
     def toggle_theme(self):
         ThemeManager.toggle_theme()
+
+    def _notify_state_recovery(self) -> None:
+        issue = getattr(self.store, 'state_load_issue', None)
+        if issue:
+            QMessageBox.warning(
+                self,
+                '데이터 복구',
+                '저장된 상태 파일에 문제가 있어 원본을 보존하고 새로 시작했습니다.\n\n' + str(issue),
+            )
 
     def get_latest_draw_no(self) -> int:
         return int(self.stats_manager.winning_data[0]['draw_no']) if self.stats_manager.winning_data else max(1, estimate_latest_draw() - 1)
@@ -240,7 +254,18 @@ class LottoApp(QMainWindow):
         self.settings_page.append_log('전체 무결성 검사/복구를 시작했습니다.' if normalized_mode == 'full_repair' else '표준 동기화를 시작했습니다.')
         worker.finished.connect(self._on_sync_finished)
         worker.error.connect(self._on_sync_error)
+        worker.progress.connect(self.settings_page.set_sync_progress)
         worker.start()
+
+    def cancel_sync(self) -> None:
+        worker = self._active_sync_worker
+        if worker is None:
+            return
+        try:
+            worker.cancel()
+        except Exception as exc:
+            logger.warning('Failed to cancel sync worker: %s', exc)
+        self.settings_page.append_log('동기화 취소를 요청했습니다.')
 
     def _on_sync_finished(self, summary: Dict[str, Any]):
         self._active_sync_worker = None
@@ -384,10 +409,35 @@ class LottoApp(QMainWindow):
         )
         self.show_status('알림 설정을 저장했습니다.', 3000)
 
+    def _cancel_background_work(self) -> None:
+        worker = self._active_sync_worker
+        if worker is not None:
+            try:
+                worker.finished.disconnect(self._on_sync_finished)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                worker.error.disconnect(self._on_sync_error)
+            except (TypeError, RuntimeError):
+                pass
+            try:
+                worker.cancel()
+            except Exception as exc:
+                logger.warning('Failed to cancel sync worker: %s', exc)
+            worker.wait(10000)
+        for task in self.findChildren(TaskThread):
+            try:
+                if task.isRunning():
+                    task.wait(5000)
+            except Exception as exc:
+                logger.warning('Failed to join background task: %s', exc)
+
     def closeEvent(self, a0: QCloseEvent | None):
         if a0 is None:
             return
         try:
+            ThemeManager.remove_listener(self.apply_theme)
+            self._cancel_background_work()
             encoded_geometry = self.saveGeometry().toBase64().data()
             self.store.state['windowGeometry'] = encoded_geometry.decode('ascii')
             self.store.save()

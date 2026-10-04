@@ -20,6 +20,18 @@ from klotto.net.http import normalize_proxy_url
 from klotto.data.store.api import StoreAPI
 
 
+def campaign_size_error(weeks: Any, sets_per_unit: Any) -> Optional[str]:
+    """캠페인 총량이 상한을 초과하면 오류 메시지, 아니면 None을 반환한다."""
+    try:
+        total = int(weeks) * int(sets_per_unit)
+    except (TypeError, ValueError):
+        return '캠페인 규모를 확인할 수 없습니다.'
+    cap = int(APP_CONFIG['MAX_CAMPAIGN_TOTAL_TICKETS'])
+    if total > cap:
+        return f'캠페인 총 티켓({total}장)이 상한({cap}장)을 초과합니다.'
+    return None
+
+
 class CampaignStoreMixin(StoreAPI):
     def prune_orphan_campaigns(self, *, save: bool = True) -> Dict[str, Any]:
         linked_ids = {str(ticket.get('campaignId') or '').strip() for ticket in self.state['ticketBook'] if ticket.get('campaignId')}

@@ -33,10 +33,12 @@ def parse_lotto_qr_url(url: str) -> dict:
     game_strs = games_str.split('n')
 
     parsed_sets = []
+    skipped = 0
     for g in game_strs:
         # Each game string should be 12 digits
         clean_g = ''.join(filter(str.isdigit, g))
         if len(clean_g) < 12:
+            skipped += 1
             continue
 
         nums = []
@@ -46,11 +48,14 @@ def parse_lotto_qr_url(url: str) -> dict:
         normalized = normalize_numbers(nums)
         if normalized:
             parsed_sets.append(normalized)
+        else:
+            skipped += 1
 
     if not parsed_sets:
         raise ValueError("No valid numbers found")
 
     return {
         'draw_no': draw_no,
-        'sets': parsed_sets
+        'sets': parsed_sets,
+        'skipped': skipped,
     }

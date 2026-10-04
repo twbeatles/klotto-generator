@@ -59,6 +59,7 @@ from klotto.data.pension720 import (
     resolve_pension720_ticket_check,
 )
 from klotto.data.app_state import get_shared_store
+from klotto.data.store.campaigns import campaign_size_error
 from klotto.data.exporter import DataExporter
 from klotto.data.favorites import FavoritesManager
 from klotto.data.history import HistoryManager
@@ -83,6 +84,7 @@ class NumberGenerationPage(QWidget):
         self.scope = scope
         self.enable_campaign = enable_campaign
         self.generated_rows: List[Dict[str, Any]] = []
+        self._last_requested_count = 0
         self._task: Optional[TaskThread] = None
         self._is_hydrating = False
         self._setup_ui(title)
@@ -275,6 +277,7 @@ class NumberGenerationPage(QWidget):
             self._show_input_error(str(exc))
             return
         count = self.set_count_spin.value()
+        self._last_requested_count = count
 
         def task() -> List[Dict[str, Any]]:
             engine = StrategyEngine(self.app_window.stats_manager.winning_data)
@@ -308,6 +311,10 @@ class NumberGenerationPage(QWidget):
         start_draw = self.campaign_start_spin.value()
         weeks = self.campaign_weeks_spin.value()
         sets_per_week = self.campaign_sets_spin.value()
+        size_error = campaign_size_error(weeks, sets_per_week)
+        if size_error:
+            self._show_input_error(size_error)
+            return
 
         def task() -> Dict[str, Any]:
             engine = StrategyEngine(self.app_window.stats_manager.winning_data)
@@ -368,7 +375,13 @@ class NumberGenerationPage(QWidget):
             self.results_table.setItem(current, 2, QTableWidgetItem(f"{row['score']:.4f}"))
             self.results_table.setItem(current, 3, QTableWidgetItem(str(row['sum'])))
             self.results_table.setItem(current, 4, QTableWidgetItem(self._format_explanation(row['explanation'])))
-        self.app_window.show_status(f'{len(rows)}개 세트를 생성했습니다.', 4000)
+        requested = self._last_requested_count or len(rows)
+        if len(rows) < requested:
+            self.app_window.show_status(
+                f'{len(rows)}개 세트 생성 (요청 {requested}개 중 일부만 조건 충족 — 필터를 완화해 보세요).', 6000
+            )
+        else:
+            self.app_window.show_status(f'{len(rows)}개 세트를 생성했습니다.', 4000)
 
     def _on_campaign_generated(self, payload: Dict[str, Any]):
         tickets = payload['tickets']
@@ -378,15 +391,20 @@ class NumberGenerationPage(QWidget):
         campaign_id = self.app_window.store.create_id('campaign')
         for ticket in tickets:
             ticket['campaignId'] = campaign_id
-        self.app_window.store.add_tickets_bulk(tickets, winning_data=self.app_window.stats_manager.winning_data)
-        self.app_window.store.add_campaign({
+        campaign = {
             'id': campaign_id,
             'name': f"{payload['startDrawNo']}회 시작 {payload['weeks']}주",
             'startDrawNo': payload['startDrawNo'],
             'weeks': payload['weeks'],
             'setsPerWeek': payload['setsPerWeek'],
             'strategyRequest': payload['request'],
-        })
+        }
+        size_error = campaign_size_error(payload['weeks'], payload['setsPerWeek'])
+        if size_error or self.app_window.store.normalize_campaign_entry(campaign) is None:
+            QMessageBox.warning(self, '캠페인', size_error or '캠페인 정보를 저장할 수 없어 티켓을 저장하지 않았습니다.')
+            return
+        self.app_window.store.add_tickets_bulk(tickets, winning_data=self.app_window.stats_manager.winning_data)
+        self.app_window.store.add_campaign(campaign)
         self.app_window.refresh_all_views()
         QMessageBox.information(self, '캠페인 완료', f"티켓 {len(tickets)}개와 캠페인을 저장했습니다.")
 

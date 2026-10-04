@@ -17,10 +17,13 @@ from klotto.core.draws import (
 from klotto.logging import logger
 from klotto.net.http import fetch_lotto_api_text
 
+DB_LOCK_TIMEOUT_S = 30.0
+
 
 class LottoSyncWorker(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
+    progress = pyqtSignal(int, int)
 
     def __init__(
         self,
@@ -44,7 +47,7 @@ class LottoSyncWorker(QThread):
 
     def _get_existing_draws(self) -> set[int]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT draw_no FROM draws")
                 rows = cursor.fetchall()
@@ -91,18 +94,32 @@ class LottoSyncWorker(QThread):
             "historical_missing": list(missing["historical"]),
         }
 
-    def _fetch_draw(self, draw_no: int) -> Optional[Dict[str, Any]]:
+    def _draws_table_readable(self) -> bool:
         try:
-            raw_data = fetch_lotto_api_text(draw_no, proxy_url=self.proxy_url)
-            payload = json.loads(raw_data)
-            legacy_payload = convert_new_api_response(payload)
-            normalized = normalize_legacy_draw_payload(legacy_payload or {})
-            if normalized:
-                return normalized
-            return None
+            with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
+                conn.execute("SELECT draw_no FROM draws LIMIT 1")
+            return True
         except Exception as exc:
-            logger.error("Fetch error for draw %s: %s", draw_no, exc)
-            return None
+            logger.error("Draws table is not readable in %s: %s", self.db_path, exc)
+            return False
+
+    def _fetch_draw(self, draw_no: int) -> Optional[Dict[str, Any]]:
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                raw_data = fetch_lotto_api_text(draw_no, proxy_url=self.proxy_url)
+                payload = json.loads(raw_data)
+                legacy_payload = convert_new_api_response(payload)
+                normalized = normalize_legacy_draw_payload(legacy_payload or {})
+                if normalized:
+                    return normalized
+                return None
+            except Exception as exc:
+                logger.error("Fetch error for draw %s (attempt %s): %s", draw_no, attempts, exc)
+                if attempts >= 2 or self._is_cancelled:
+                    return None
+                self.msleep(500)
 
     def _build_summary(
         self,
@@ -141,6 +158,10 @@ class LottoSyncWorker(QThread):
             return
 
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if self.db_path.exists() and not self._draws_table_readable():
+            self.error.emit("당첨번호 데이터베이스를 읽을 수 없습니다. 데이터 파일을 확인한 뒤 다시 시도해 주세요.")
+            return
 
         current_draw = estimate_latest_draw()
         plan = self._get_sync_targets(current_draw)
@@ -186,6 +207,7 @@ class LottoSyncWorker(QThread):
             else:
                 failed_draws.append(draw_no)
 
+            self.progress.emit(len(fetched_records) + len(failed_draws), len(targets))
             self.msleep(200)
 
         self.finished.emit(

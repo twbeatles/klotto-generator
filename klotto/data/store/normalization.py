@@ -286,6 +286,31 @@ class NormalizationMixin(StoreAPI):
             'score': score,
             'memo': str(raw.get('memo') or '')[:200],
             'createdAt': str(raw.get('createdAt') or dt.datetime.now().isoformat()),
+            'checked': self.normalize_pension720_checked(raw.get('checked')),
+        }
+
+    def normalize_pension720_checked(self, raw: Any) -> Optional[Dict[str, Any]]:
+        if not isinstance(raw, dict):
+            return None
+        checked_draw = normalize_positive_int(raw.get('drawNo'))
+        if checked_draw is None:
+            return None
+        raw_rank = raw.get('rank')
+        rank: Any
+        if raw_rank == 'bonus':
+            rank = 'bonus'
+        elif raw_rank is None:
+            rank = 0
+        else:
+            try:
+                rank = max(0, min(7, int(raw_rank)))
+            except (TypeError, ValueError):
+                rank = 0
+        return {
+            'drawNo': checked_draw,
+            'rank': rank,
+            'label': str(raw.get('label') or '')[:40],
+            'checkedAt': str(raw.get('checkedAt') or dt.datetime.now().isoformat()),
         }
 
     def build_pension720_ticket_key(self, ticket: Dict[str, Any]) -> str:

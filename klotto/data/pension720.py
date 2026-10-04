@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from klotto.config import APP_CONFIG
+from klotto.logging import logger
 from klotto.net.http import fetch_text
 
 PENSION720_OFFICIAL_LIST_URL = 'https://www.dhlottery.co.kr/pt720/selectPstPt720WnList.do'
@@ -96,8 +97,12 @@ def load_pension720_static_data(path: Optional[Path] = None) -> List[Dict[str, A
     target = path or get_bundled_pension720_path()
     if not target.exists():
         return []
-    with target.open('r', encoding='utf-8') as handle:
-        return normalize_pension720_stats(json.load(handle))
+    try:
+        with target.open('r', encoding='utf-8') as handle:
+            return normalize_pension720_stats(json.load(handle))
+    except Exception as exc:
+        logger.error('Failed to load pension720 static data from %s: %s', target, exc)
+        return []
 
 
 def fetch_pension720_official_stats(*, proxy_url: str = '') -> List[Dict[str, Any]]:
