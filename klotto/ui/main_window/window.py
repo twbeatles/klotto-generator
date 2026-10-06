@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Any, Dict, List, Optional, Sequence
 
-from PyQt6.QtCore import QByteArray, Qt
+from PyQt6.QtCore import QByteArray, QEventLoop, Qt, QThread, QTimer
 from PyQt6.QtGui import QCloseEvent, QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -52,6 +54,9 @@ class LottoApp(QMainWindow):
         self.stats_manager = WinningStatsManager()
         self._active_sync_worker: Optional[LottoSyncWorker] = None
         self._sync_start_latest_draw = 0
+        self._sync_applying = False
+        self._sync_apply_cancelled = False
+        self._sync_apply_state: Optional[Dict[str, Any]] = None
         ThemeManager.set_theme_name(self.store.state.get('theme', 'light'))
         ThemeManager.add_listener(self.apply_theme)
         self._setup_ui()
@@ -192,7 +197,13 @@ class LottoApp(QMainWindow):
         self.store.state['dataHealth'] = {'availability': availability, 'source': 'sqlite_db', 'latestDrawNo': latest_draw, 'message': message}
         self.store.save()
 
+    def report_save_state(self) -> None:
+        issue = getattr(self.store, 'last_save_error', None)
+        if issue:
+            self.show_status(f'저장하지 못했어요. 다시 시도해 주세요. ({issue})', 6000)
+
     def refresh_all_views(self):
+        self.report_save_state()
         self.refresh_data_health()
         self.stats_page.refresh_data()
         self.generator_page.refresh_view_state()
@@ -236,6 +247,8 @@ class LottoApp(QMainWindow):
         }]
 
     def start_sync(self, mode: str = 'standard'):
+        if self._sync_applying:
+            return
         if self._active_sync_worker and self._active_sync_worker.isRunning():
             return
         normalized_mode = 'full_repair' if mode == 'full_repair' else 'standard'
@@ -258,6 +271,9 @@ class LottoApp(QMainWindow):
     def cancel_sync(self) -> None:
         worker = self._active_sync_worker
         if worker is None:
+            if self._sync_applying:
+                self._sync_apply_cancelled = True
+                self.settings_page.append_log('반영 중단을 요청했어요.')
             return
         try:
             worker.cancel()
@@ -265,16 +281,12 @@ class LottoApp(QMainWindow):
             logger.warning('Failed to cancel sync worker: %s', exc)
         self.settings_page.append_log('가져오기 중단을 요청했어요.')
 
-    def _on_sync_finished(self, summary: Dict[str, Any]):
-        self._active_sync_worker = None
-        self.settings_page.set_sync_in_progress(False)
-        fetched_records = summary.get('fetched_records', [])
-        failed_draws = summary.get('failed_draws', [])
-        cancelled = bool(summary.get('cancelled'))
-        mode = 'full_repair' if summary.get('mode') == 'full_repair' else 'standard'
+    _SYNC_APPLY_CHUNK_SIZE = 100
+
+    def _apply_sync_records(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
         inserted = updated = unchanged = invalid = 0
         inserted_draws: List[int] = []
-        for record in fetched_records:
+        for record in records:
             status = self.stats_manager.upsert_winning_data(
                 record['draw_no'],
                 record['numbers'],
@@ -293,7 +305,110 @@ class LottoApp(QMainWindow):
                 unchanged += 1
             else:
                 invalid += 1
+        return {
+            'inserted': inserted,
+            'updated': updated,
+            'unchanged': unchanged,
+            'invalid': invalid,
+            'inserted_draws': inserted_draws,
+        }
 
+    def _begin_chunked_apply(self, summary: Dict[str, Any], records: List[Dict[str, Any]]) -> None:
+        self._sync_apply_state = {
+            'summary': summary,
+            'records': records,
+            'index': 0,
+            'inserted': 0,
+            'updated': 0,
+            'unchanged': 0,
+            'invalid': 0,
+            'inserted_draws': [],
+        }
+        self._sync_applying = True
+        self._sync_apply_cancelled = False
+        self.settings_page.set_sync_in_progress(True)
+        self.settings_page.append_log(f'가져온 {len(records)}개를 반영하는 중이에요.')
+        self.settings_page.set_sync_progress(0, len(records))
+        QTimer.singleShot(0, self._apply_sync_chunk)
+
+    def _apply_sync_chunk(self) -> None:
+        state = self._sync_apply_state
+        if state is None:
+            return
+        summary = state['summary']
+        records = state['records']
+        if self._sync_apply_cancelled:
+            remaining = [int(item.get('draw_no', 0)) for item in records[state['index']:] if int(item.get('draw_no', 0)) > 0]
+            summary = {**summary, 'cancelled': True, 'failed_draws': [*summary.get('failed_draws', []), *remaining]}
+            self._finish_chunked_apply(summary)
+            return
+        chunk = records[state['index']:state['index'] + self._SYNC_APPLY_CHUNK_SIZE]
+        counts = self._apply_sync_records(chunk)
+        state['index'] += len(chunk)
+        for key in ('inserted', 'updated', 'unchanged', 'invalid'):
+            state[key] += counts[key]
+        state['inserted_draws'].extend(counts['inserted_draws'])
+        self.settings_page.set_sync_progress(state['index'], len(records))
+        if state['index'] < len(records):
+            QTimer.singleShot(0, self._apply_sync_chunk)
+            return
+        self._finish_chunked_apply(summary)
+
+    def _finish_chunked_apply(self, summary: Dict[str, Any]) -> None:
+        state = self._sync_apply_state
+        self._sync_apply_state = None
+        self._sync_applying = False
+        self._sync_apply_cancelled = False
+        self.settings_page.set_sync_in_progress(False)
+        counts = state or {}
+        self._finalize_sync(
+            summary,
+            inserted=int(counts.get('inserted', 0)),
+            updated=int(counts.get('updated', 0)),
+            unchanged=int(counts.get('unchanged', 0)),
+            invalid=int(counts.get('invalid', 0)),
+            inserted_draws=[int(item) for item in counts.get('inserted_draws', [])],
+        )
+
+    def _on_sync_finished(self, summary: Dict[str, Any]):
+        self._active_sync_worker = None
+        self.settings_page.set_sync_in_progress(False)
+        fetched_records = list(summary.get('fetched_records', []))
+        if summary.get('dbApplied'):
+            try:
+                self.stats_manager.reload_from_db()
+            except Exception as exc:
+                logger.warning('Failed to reload winning data after sync: %s', exc)
+        if fetched_records and not summary.get('dbApplied'):
+            if len(fetched_records) <= self._SYNC_APPLY_CHUNK_SIZE:
+                counts = self._apply_sync_records(fetched_records)
+                self._finalize_sync(summary, **counts)
+            else:
+                self._begin_chunked_apply(summary, fetched_records)
+            return
+        applied = summary.get('appliedCounts') or {}
+        self._finalize_sync(
+            summary,
+            inserted=int(applied.get('inserted', 0)),
+            updated=int(applied.get('updated', 0)),
+            unchanged=int(applied.get('unchanged', 0)),
+            invalid=int(applied.get('invalid', 0)),
+            inserted_draws=[int(item) for item in summary.get('insertedDraws', [])],
+        )
+
+    def _finalize_sync(
+        self,
+        summary: Dict[str, Any],
+        *,
+        inserted: int,
+        updated: int,
+        unchanged: int,
+        invalid: int,
+        inserted_draws: List[int],
+    ):
+        failed_draws = summary.get('failed_draws', [])
+        cancelled = bool(summary.get('cancelled'))
+        mode = 'full_repair' if summary.get('mode') == 'full_repair' else 'standard'
         settled = self.store.settle_tickets_if_possible(self.store.state['ticketBook'], self.stats_manager.winning_data)
         applied_count = inserted + updated + unchanged
         if cancelled:
@@ -406,6 +521,22 @@ class LottoApp(QMainWindow):
         )
         self.show_status('알림 설정을 저장했습니다.', 3000)
 
+    @staticmethod
+    def _wait_for_thread(thread: QThread, timeout_s: float) -> bool:
+        """이벤트를 펌핑하며 스레드 종료를 기다린다. 시간 내 종료 시 True.
+
+        wait() 반환값을 무시하고 종료를 진행하면 실행 중인 QThread가 파괴되어
+        프로세스가 abort하므로, 만료 여부를 반드시 확인해야 한다.
+        """
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while thread.isRunning():
+            remaining_ms = int(max(0.0, deadline - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                return False
+            thread.wait(min(remaining_ms, 200))
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 50)
+        return True
+
     def _cancel_background_work(self) -> None:
         worker = self._active_sync_worker
         if worker is not None:
@@ -421,11 +552,13 @@ class LottoApp(QMainWindow):
                 worker.cancel()
             except Exception as exc:
                 logger.warning('Failed to cancel sync worker: %s', exc)
-            worker.wait(10000)
+            self.show_status('진행 중인 가져오기를 마무리하는 중이에요…')
+            if not self._wait_for_thread(worker, timeout_s=15.0):
+                logger.error('Sync worker did not stop within timeout; closing anyway')
         for task in self.findChildren(TaskThread):
             try:
-                if task.isRunning():
-                    task.wait(5000)
+                if task.isRunning() and not self._wait_for_thread(task, timeout_s=5.0):
+                    logger.error('Background task did not stop within timeout; closing anyway')
             except Exception as exc:
                 logger.warning('Failed to join background task: %s', exc)
 

@@ -53,6 +53,34 @@ def get_last_draw_no(conn):
     result = cursor.fetchone()
     return result[0] if result[0] else 0
 
+def find_gap_draws(conn, last_draw):
+    """Return sorted draw numbers missing within 1..last_draw.
+
+    The incremental collector only fetches forward from MAX(draw_no)+1,
+    so a draw skipped by a past transient failure stays missing forever.
+    Backfilling these gaps keeps the history contiguous.
+    """
+    if last_draw <= 0:
+        return []
+    cursor = conn.cursor()
+    cursor.execute('SELECT draw_no FROM draws WHERE draw_no BETWEEN 1 AND ?', (last_draw,))
+    existing = {row[0] for row in cursor.fetchall()}
+    return [draw_no for draw_no in range(1, last_draw + 1) if draw_no not in existing]
+
+def fetch_and_save(conn, draw_no, verify_ssl=True):
+    """Fetch one draw and save it. Returns True on success."""
+    data = fetch_draw(draw_no, verify_ssl=verify_ssl)
+    if not data:
+        print(f'Draw {draw_no}: network error or invalid response.')
+        return False
+    if data.get('returnValue') == 'fail':
+        print(f'Draw {draw_no}: not yet drawn or invalid.')
+        return False
+    if save_draw(conn, data):
+        return True
+    print(f'Draw {draw_no}: failed to save.')
+    return False
+
 def fetch_draw(draw_no, verify_ssl=True):
     """Fetch draw data from the official API."""
     url = API_URL.format(draw_no)
@@ -96,8 +124,11 @@ def save_draw(conn, data):
     # drwNo, drwtNo1, ..., drwNoDate
     
     # Check if it's the new nested format (defensive coding based on client.py)
-    if 'data' in data and 'list' in data['data']:
-         item = data['data']['list'][0]
+    if 'data' in data and isinstance(data.get('data'), dict) and 'list' in data['data']:
+         items = data['data']['list'] or []
+         if not items:
+             return False
+         item = items[0]
          # Mapping from client.py
          record = (
             item.get('ltEpsd'),
@@ -156,36 +187,34 @@ def main(verify_ssl=True):
     
     last_draw = get_last_draw_no(conn)
     print(f"Last recorded draw: {last_draw}")
-    
+
+    gap_draws = find_gap_draws(conn, last_draw)
+    if gap_draws:
+        print(f"Backfilling {len(gap_draws)} missing draw(s): {gap_draws}")
+        for draw_no in gap_draws:
+            print(f"Fetching draw #{draw_no}...", end=" ", flush=True)
+            if fetch_and_save(conn, draw_no, verify_ssl=verify_ssl):
+                print("Success!")
+            else:
+                print("Failed.")
+            time.sleep(0.2) # Be polite to the server
+
     current_draw = last_draw + 1
     consecutive_failures = 0
-    MAX_FAILURES = 3 
-    
+    MAX_FAILURES = 3
+
     while True:
         print(f"Fetching draw #{current_draw}...", end=" ", flush=True)
-        data = fetch_draw(current_draw, verify_ssl=verify_ssl)
-        
-        if data:
-            # Check if valid return
-            # Standard API returns fail if draw not happened yet
-            if data.get('returnValue') == 'fail':
-                 print("Not yet drawn or invalid.")
-                 consecutive_failures += 1
-            else:
-                 if save_draw(conn, data):
-                     print("Success!")
-                     consecutive_failures = 0
-                 else:
-                     print("Failed to save.")
-                     consecutive_failures += 1
+        if fetch_and_save(conn, current_draw, verify_ssl=verify_ssl):
+            print("Success!")
+            consecutive_failures = 0
         else:
-            print("Network error or invalid response.")
             consecutive_failures += 1
-            
+
         if consecutive_failures >= MAX_FAILURES:
             print(f"Stopping after {consecutive_failures} consecutive failures. Assuming end of history reached.")
             break
-            
+
         current_draw += 1
         time.sleep(0.2) # Be polite to the server
 

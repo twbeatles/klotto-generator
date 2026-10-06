@@ -105,6 +105,9 @@ class DataPage(QWidget):
         self.import_backup_btn = QPushButton('전체 불러오기')
         self.import_backup_btn.clicked.connect(self.import_backup)
         actions.addWidget(self.import_backup_btn)
+        self.restore_btn = QPushButton('불러오기 전으로 되돌리기')
+        self.restore_btn.clicked.connect(self.restore_preimport_snapshot)
+        actions.addWidget(self.restore_btn)
         self.legacy_btn = QPushButton('이전 버전 파일')
         self.legacy_btn.clicked.connect(self.open_legacy_dialog)
         actions.addWidget(self.legacy_btn)
@@ -256,9 +259,50 @@ class DataPage(QWidget):
         timestamp = dt.datetime.now().strftime('%Y%m%d_%H%M%S')
         snapshot = Path(self.app_window.store.state_file).with_name(f'app_state.preimport-{timestamp}.json')
         DataExporter.export_any_json(self.app_window.store.export_backup_payload(), str(snapshot))
-        self.app_window.store.import_backup_payload(payload, mode=mode, winning_data=self.app_window.stats_manager.winning_data)
+        result = self.app_window.store.import_backup_payload(payload, mode=mode, winning_data=self.app_window.stats_manager.winning_data)
         self.app_window.refresh_all_views()
         self.app_window.show_status('저장 파일을 불러왔어요.', 4000)
+        QMessageBox.information(
+            self,
+            '불러오기 완료',
+            '저장 파일을 불러왔어요.\n'
+            f"즐겨찾기 {result['favorites']}개 · 만든 기록 {result['history']}개 · "
+            f"구매 목록 {result['tickets']}장 · 묶음 {result['campaigns']}개",
+        )
+
+    def list_preimport_snapshots(self) -> List[Path]:
+        state_dir = Path(self.app_window.store.state_file).parent
+        return sorted(state_dir.glob('app_state.preimport-*.json'), reverse=True)
+
+    def restore_preimport_snapshot(self):
+        snapshots = self.list_preimport_snapshots()
+        if not snapshots:
+            QMessageBox.information(self, '되돌리기', '되돌릴 수 있는 저장 시점이 없습니다.')
+            return
+        names = [path.name for path in snapshots]
+        choice, accepted = QInputDialog.getItem(self, '되돌리기', '되돌릴 시점', names, 0, False)
+        if not accepted:
+            return
+        target = next((path for path in snapshots if path.name == str(choice)), None)
+        if target is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            '되돌리기',
+            f'{target.name} 시점으로 모두 되돌립니다.\n현재 상태는 덮어써집니다. 계속할까요?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        payload = DataExporter.import_any_json(str(target))
+        if not isinstance(payload, dict):
+            QMessageBox.warning(self, '되돌리기', '스냅샷 파일이 손상되었습니다.')
+            return
+        self.app_window.store.import_backup_payload(
+            payload, mode='overwrite', winning_data=self.app_window.stats_manager.winning_data
+        )
+        self.app_window.refresh_all_views()
+        self.app_window.show_status('불러오기 전 상태로 되돌렸어요.', 4000)
 
     def export_winning_excel(self):
         filepath, _ = QFileDialog.getSaveFileName(self, '당첨 번호 엑셀로 저장', 'lotto_history.xlsx', 'Excel 파일 (*.xlsx)')

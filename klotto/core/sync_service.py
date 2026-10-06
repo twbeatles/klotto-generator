@@ -14,6 +14,7 @@ from klotto.core.draws import (
     normalize_legacy_draw_payload,
     split_missing_draws,
 )
+from klotto.core.stats import SYNC_DB_BATCH_SIZE, ensure_draws_schema, upsert_draw_record
 from klotto.logging import logger
 from klotto.net.http import fetch_lotto_api_text
 
@@ -103,6 +104,52 @@ class LottoSyncWorker(QThread):
             logger.error("Draws table is not readable in %s: %s", self.db_path, exc)
             return False
 
+    def _apply_records_to_db(
+        self, records: List[Dict[str, Any]]
+    ) -> tuple[List[int], List[int]]:
+        """가져온 레코드를 워커 스레드에서 DB에 배치 반영한다.
+
+        GUI 스레드에서 건당 upsert하던 기존 방식의 프리즈를 없애기 위함이다.
+        100건 단위로 커밋하므로 중단·충돌 시에도 앞부분은 보존된다.
+        """
+        applied: List[int] = []
+        failed: List[int] = []
+        if not records:
+            return applied, failed
+        try:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
+                ensure_draws_schema(conn)
+                for index, record in enumerate(records):
+                    if self._is_cancelled:
+                        failed.extend(
+                            int(item.get('draw_no', 0))
+                            for item in records[index:]
+                            if int(item.get('draw_no', 0) or 0) > 0
+                        )
+                        break
+                    try:
+                        upsert_draw_record(conn, record)
+                        applied.append(int(record['draw_no']))
+                    except Exception as exc:
+                        logger.error(
+                            'Failed to apply draw %s to DB: %s', record.get('draw_no'), exc
+                        )
+                        failed.append(int(record.get('draw_no', 0) or 0))
+                    if len(applied) % SYNC_DB_BATCH_SIZE == 0:
+                        conn.commit()
+                conn.commit()
+        except Exception as exc:
+            logger.error('Failed to open sync DB %s: %s', self.db_path, exc)
+            applied_ids = set(applied)
+            failed.extend(
+                int(record.get('draw_no', 0) or 0)
+                for record in records
+                if int(record.get('draw_no', 0) or 0) > 0
+                and int(record.get('draw_no', 0) or 0) not in applied_ids
+            )
+        return applied, failed
+
     def _fetch_draw(self, draw_no: int) -> Optional[Dict[str, Any]]:
         attempts = 0
         while True:
@@ -185,20 +232,12 @@ class LottoSyncWorker(QThread):
 
         fetched_records: List[Dict[str, Any]] = []
         failed_draws: List[int] = []
+        cancelled = False
 
         for draw_no in targets:
             if self._is_cancelled:
-                self.finished.emit(
-                    self._build_summary(
-                        targets=targets,
-                        fetched_records=fetched_records,
-                        failed_draws=failed_draws,
-                        cancelled=True,
-                        recent_missing_count=recent_missing_count,
-                        historical_missing_count=historical_missing_count,
-                    )
-                )
-                return
+                cancelled = True
+                break
 
             record = self._fetch_draw(draw_no)
             if record:
@@ -210,16 +249,28 @@ class LottoSyncWorker(QThread):
             self.progress.emit(len(fetched_records) + len(failed_draws), len(targets))
             self.msleep(200)
 
-        self.finished.emit(
-            self._build_summary(
-                targets=targets,
-                fetched_records=fetched_records,
-                failed_draws=failed_draws,
-                cancelled=False,
-                recent_missing_count=recent_missing_count,
-                historical_missing_count=historical_missing_count,
-            )
+        applied_draws, apply_failed = self._apply_records_to_db(fetched_records)
+        for draw_no in apply_failed:
+            if draw_no not in failed_draws:
+                failed_draws.append(draw_no)
+
+        summary = self._build_summary(
+            targets=targets,
+            fetched_records=fetched_records,
+            failed_draws=failed_draws,
+            cancelled=cancelled,
+            recent_missing_count=recent_missing_count,
+            historical_missing_count=historical_missing_count,
         )
+        summary['dbApplied'] = True
+        summary['appliedCounts'] = {
+            'inserted': len(applied_draws),
+            'updated': 0,
+            'unchanged': 0,
+            'invalid': 0,
+        }
+        summary['insertedDraws'] = list(applied_draws)
+        self.finished.emit(summary)
 
 
 def start_background_sync(stats_manager=None) -> Optional[LottoSyncWorker]:

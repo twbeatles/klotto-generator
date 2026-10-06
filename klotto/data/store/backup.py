@@ -54,15 +54,16 @@ class BackupStoreMixin(StoreAPI):
             for campaign in normalized['pension720Campaigns']:
                 if campaign.get('id') not in existing_p720_campaign_ids:
                     self.state['pension720Campaigns'].append(campaign)
-            self.state['strategyPrefs'] = normalized['strategyPrefs']
-            self.state['strategyPresets'] = normalized['strategyPresets']
-            self.state['alertPrefs'] = normalized['alertPrefs']
-            self.state['theme'] = normalized['theme']
-            self.state['proxyUrl'] = normalized['proxyUrl']
-            self.state['generatorOptions'] = normalized['generatorOptions']
-            self.state['syncMeta'] = normalized['syncMeta']
-            self.state['dataHealth'] = normalized['dataHealth']
-            self.state['pension720DataHealth'] = normalized['pension720DataHealth']
+            # Merge mode keeps the live app's own preferences/health and only
+            # unions stored data: importing an old backup must not roll back
+            # the user's current strategy choices or sync metadata.
+            existing_preset_ids = {item.get('id') for item in self.state['strategyPresets']}
+            for preset in normalized['strategyPresets']:
+                if preset.get('id') not in existing_preset_ids:
+                    self.state['strategyPresets'].append(preset)
+                    existing_preset_ids.add(preset.get('id'))
+            max_presets = int(APP_CONFIG['MAX_STRATEGY_PRESETS'])
+            self.state['strategyPresets'] = self.state['strategyPresets'][:max_presets]
         if winning_data:
             self.settle_tickets_if_possible(self.state['ticketBook'], winning_data)
         self.prune_orphan_campaigns(save=False)

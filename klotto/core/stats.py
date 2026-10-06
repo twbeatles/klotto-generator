@@ -13,6 +13,79 @@ UpsertStatus = str
 
 DB_LOCK_TIMEOUT_S = 30.0
 
+SYNC_DB_BATCH_SIZE = 100
+
+
+def ensure_draws_schema(conn: sqlite3.Connection) -> None:
+    """draws 테이블이 없으면 생성한다. 스레드/프로세스에 구애받지 않는다."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS draws (
+            draw_no INTEGER PRIMARY KEY,
+            date TEXT,
+            num1 INTEGER, num2 INTEGER, num3 INTEGER,
+            num4 INTEGER, num5 INTEGER, num6 INTEGER,
+            bonus INTEGER,
+            prize_amount INTEGER,
+            winners_count INTEGER,
+            total_sales INTEGER
+        )
+        """
+    )
+
+
+def upsert_draw_record(conn: sqlite3.Connection, record: WinningRecord) -> None:
+    """정규화된 1건 레코드를 DB에 반영한다. 커밋은 호출자가 수행한다."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO draws (
+            draw_no, date, num1, num2, num3, num4, num5, num6, bonus,
+            prize_amount, winners_count, total_sales
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(draw_no) DO UPDATE SET
+            date = CASE
+                WHEN excluded.date <> '' THEN excluded.date
+                ELSE draws.date
+            END,
+            num1 = excluded.num1,
+            num2 = excluded.num2,
+            num3 = excluded.num3,
+            num4 = excluded.num4,
+            num5 = excluded.num5,
+            num6 = excluded.num6,
+            bonus = excluded.bonus,
+            prize_amount = CASE
+                WHEN excluded.prize_amount > 0 THEN excluded.prize_amount
+                ELSE draws.prize_amount
+            END,
+            winners_count = CASE
+                WHEN excluded.winners_count > 0 THEN excluded.winners_count
+                ELSE draws.winners_count
+            END,
+            total_sales = CASE
+                WHEN excluded.total_sales > 0 THEN excluded.total_sales
+                ELSE draws.total_sales
+            END
+        """,
+        (
+            record["draw_no"],
+            record.get("date", ""),
+            record["numbers"][0],
+            record["numbers"][1],
+            record["numbers"][2],
+            record["numbers"][3],
+            record["numbers"][4],
+            record["numbers"][5],
+            record["bonus"],
+            record.get("first_prize", 0),
+            record.get("first_winners", 0),
+            record.get("total_sales", 0),
+        ),
+    )
+
 
 # ============================================================
 # 역대 당첨 번호 통계 관리
@@ -178,21 +251,7 @@ class WinningStatsManager:
             self._set_winning_data(self.winning_data[:cache_size])
 
     def _ensure_db_schema(self, conn: sqlite3.Connection):
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS draws (
-                draw_no INTEGER PRIMARY KEY,
-                date TEXT,
-                num1 INTEGER, num2 INTEGER, num3 INTEGER,
-                num4 INTEGER, num5 INTEGER, num6 INTEGER,
-                bonus INTEGER,
-                prize_amount INTEGER,
-                winners_count INTEGER,
-                total_sales INTEGER
-            )
-            """
-        )
+        ensure_draws_schema(conn)
 
     def _load(self):
         """데이터 로드 - DB 우선, JSON 폴백"""
@@ -293,54 +352,7 @@ class WinningStatsManager:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             with sqlite3.connect(self.db_path, timeout=DB_LOCK_TIMEOUT_S) as conn:
                 self._ensure_db_schema(conn)
-                cursor = conn.cursor()
-                cursor.execute(
-                    """
-                    INSERT INTO draws (
-                        draw_no, date, num1, num2, num3, num4, num5, num6, bonus,
-                        prize_amount, winners_count, total_sales
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(draw_no) DO UPDATE SET
-                        date = CASE
-                            WHEN excluded.date <> '' THEN excluded.date
-                            ELSE draws.date
-                        END,
-                        num1 = excluded.num1,
-                        num2 = excluded.num2,
-                        num3 = excluded.num3,
-                        num4 = excluded.num4,
-                        num5 = excluded.num5,
-                        num6 = excluded.num6,
-                        bonus = excluded.bonus,
-                        prize_amount = CASE
-                            WHEN excluded.prize_amount > 0 THEN excluded.prize_amount
-                            ELSE draws.prize_amount
-                        END,
-                        winners_count = CASE
-                            WHEN excluded.winners_count > 0 THEN excluded.winners_count
-                            ELSE draws.winners_count
-                        END,
-                        total_sales = CASE
-                            WHEN excluded.total_sales > 0 THEN excluded.total_sales
-                            ELSE draws.total_sales
-                        END
-                    """,
-                    (
-                        record["draw_no"],
-                        record.get("date", ""),
-                        record["numbers"][0],
-                        record["numbers"][1],
-                        record["numbers"][2],
-                        record["numbers"][3],
-                        record["numbers"][4],
-                        record["numbers"][5],
-                        record["bonus"],
-                        record.get("first_prize", 0),
-                        record.get("first_winners", 0),
-                        record.get("total_sales", 0),
-                    ),
-                )
+                upsert_draw_record(conn, record)
                 conn.commit()
             return True
         except Exception as exc:

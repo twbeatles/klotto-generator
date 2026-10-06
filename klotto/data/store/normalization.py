@@ -386,8 +386,13 @@ class NormalizationMixin(StoreAPI):
                 return
             key = self.build_ticket_key(ticket)
             if key in key_to_index:
+                # Merge keeps the larger quantity so that re-importing the
+                # same backup stays idempotent instead of inflating counts.
                 current = merged[key_to_index[key]]
-                current['quantity'] = self.normalize_ticket_quantity(self.get_ticket_quantity(current) + self.get_ticket_quantity(ticket))
+                current['quantity'] = max(
+                    self.get_ticket_quantity(current),
+                    self.get_ticket_quantity(ticket),
+                )
                 return
             key_to_index[key] = len(merged)
             merged.append(ticket)

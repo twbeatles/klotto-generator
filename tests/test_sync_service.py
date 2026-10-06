@@ -13,8 +13,18 @@ from klotto.core.sync_service import LottoSyncWorker
 def _create_db(path: Path, draw_nos: list[int]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
-        conn.execute("CREATE TABLE draws (draw_no INTEGER PRIMARY KEY)")
-        conn.executemany("INSERT INTO draws (draw_no) VALUES (?)", [(draw_no,) for draw_no in draw_nos])
+        conn.execute(
+            "CREATE TABLE draws (draw_no INTEGER PRIMARY KEY, date TEXT,"
+            " num1 INTEGER, num2 INTEGER, num3 INTEGER, num4 INTEGER,"
+            " num5 INTEGER, num6 INTEGER, bonus INTEGER, prize_amount INTEGER,"
+            " winners_count INTEGER, total_sales INTEGER)"
+        )
+        conn.executemany(
+            "INSERT INTO draws (draw_no, date, num1, num2, num3, num4, num5,"
+            " num6, bonus, prize_amount, winners_count, total_sales)"
+            " VALUES (?, '2026-01-01', 1, 2, 3, 4, 5, 6, 7, 100, 1, 1000)",
+            [(draw_no,) for draw_no in draw_nos],
+        )
         conn.commit()
 
 
@@ -144,3 +154,40 @@ def test_sync_worker_emits_cancelled_status(monkeypatch: pytest.MonkeyPatch, tmp
     assert summary['cancelled'] is True
     assert summary['status'] == 'cancelled'
     assert summary['fetched_records'][0]['draw_no'] == 2
+
+
+def test_worker_applies_fetched_records_to_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    db_path = tmp_path / 'lotto.db'
+    _create_db(db_path, [1, 2])
+    monkeypatch.setattr(sync_service, 'estimate_latest_draw', lambda: 4)
+
+    worker = LottoSyncWorker(db_path, recent_window=1, mode='standard', historical_batch_size=10)
+    monkeypatch.setattr(worker, '_fetch_draw', lambda draw_no: _record(draw_no))
+
+    summary = _run_worker(worker)
+
+    assert summary['dbApplied'] is True
+    assert summary['appliedCounts'] == {'inserted': 2, 'updated': 0, 'unchanged': 0, 'invalid': 0}
+    assert summary['insertedDraws'] == [3, 4]
+    with sqlite3.connect(db_path) as conn:
+        stored = {row[0] for row in conn.execute('SELECT draw_no FROM draws')}
+    assert stored == {1, 2, 3, 4}
+
+
+def test_standard_sync_includes_midrange_gap_without_allowlist(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    from klotto.config import APP_CONFIG
+
+    db_path = tmp_path / 'lotto.db'
+    _create_db(db_path, [1, 2, 4, 5])
+    monkeypatch.setattr(sync_service, 'estimate_latest_draw', lambda: 5)
+    monkeypatch.setitem(APP_CONFIG, 'ALLOWED_MISSING_DRAWS', [])
+
+    worker = LottoSyncWorker(db_path, recent_window=10, mode='standard', historical_batch_size=10)
+    monkeypatch.setattr(worker, '_fetch_draw', lambda draw_no: _record(draw_no))
+
+    summary = _run_worker(worker)
+
+    assert summary['attemptedDraws'] == [3]
+    assert summary['status'] == 'success'

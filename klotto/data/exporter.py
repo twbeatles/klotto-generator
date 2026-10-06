@@ -1,10 +1,20 @@
 import json
 import csv
+import os
 from typing import Any, List, Dict, Optional
 
 from klotto.core.lotto_rules import normalize_numbers, normalize_positive_int
 from klotto.data.pension720 import protect_spreadsheet_formula
 from klotto.logging import logger
+
+MAX_JSON_IMPORT_BYTES = 32 * 1024 * 1024
+
+
+def _json_import_too_large(filepath: str) -> bool:
+    try:
+        return os.path.getsize(filepath) > MAX_JSON_IMPORT_BYTES
+    except OSError:
+        return False
 
 # ============================================================
 # 데이터 내보내기/가져오기
@@ -87,6 +97,9 @@ class DataExporter:
     def import_from_json(filepath: str) -> Optional[List[Dict[str, Any]]]:
         """JSON에서 가져오기"""
         try:
+            if _json_import_too_large(filepath):
+                logger.error(f"Refusing oversized JSON import: {filepath}")
+                return None
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             logger.info(f"Imported {len(data)} items from {filepath}")
@@ -98,6 +111,9 @@ class DataExporter:
     @staticmethod
     def import_any_json(filepath: str) -> Any:
         try:
+            if _json_import_too_large(filepath):
+                logger.error(f"Refusing oversized generic JSON import: {filepath}")
+                return None
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             logger.info(f"Imported generic JSON from {filepath}")

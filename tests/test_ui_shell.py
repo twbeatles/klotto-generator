@@ -31,6 +31,10 @@ class StubWinningInfoWidget(QWidget):
 class FakeStatsManager:
     def __init__(self, winning_data: list[dict[str, Any]]):
         self.winning_data = [dict(item) for item in winning_data]
+        self.reloaded = False
+
+    def reload_from_db(self) -> None:
+        self.reloaded = True
 
     def get_frequency_analysis(self) -> dict[str, list[tuple[int, int]]]:
         counts = {number: 0 for number in range(1, 46)}
@@ -888,12 +892,19 @@ def test_import_backup_writes_preimport_snapshot(qapp: QApplication, monkeypatch
         'getItem',
         lambda *args, **_kwargs: ('merge 방식으로 불러오기(권장)', True),
     )
+    shown: list[tuple] = []
+    monkeypatch.setattr(
+        data_page_module.QMessageBox,
+        'information',
+        lambda *args, **_kwargs: shown.append(args),
+    )
     try:
         app.data_page.import_backup()
 
         snapshots = list((tmp_path / 'state').glob('app_state.preimport-*.json'))
         assert len(snapshots) == 1
         assert len(store.state['history']) == 1
+        assert shown and '즐겨찾기' in shown[-1][2] and '구매 목록' in shown[-1][2]
     finally:
         app.close()
 
@@ -962,3 +973,176 @@ def test_pension720_campaign_ready_rejects_oversize_payload(qapp: QApplication, 
         assert store.state['pension720Campaigns'] == []
     finally:
         app.close()
+
+
+def test_report_save_state_surfaces_failure(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    shown: list[tuple] = []
+    monkeypatch.setattr(app, 'show_status', lambda *args, **_kwargs: shown.append(args))
+    try:
+        store.last_save_error = 'disk is full (simulated)'
+        app.report_save_state()
+        assert shown and 'disk is full (simulated)' in shown[-1][0]
+
+        store.last_save_error = None
+        shown.clear()
+        app.report_save_state()
+        assert shown == []
+    finally:
+        app.close()
+
+
+def test_sync_finish_applies_large_batch_in_chunks(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import time as _time
+
+    app, _store, fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    before = len(fake_stats.winning_data)
+    records = [
+        {
+            'draw_no': 100 + index,
+            'numbers': [1, 2, 3, 4, 5, 6],
+            'bonus': 7,
+            'date': '2026-05-01',
+            'first_prize': 0,
+            'first_winners': 0,
+            'total_sales': 0,
+        }
+        for index in range(250)
+    ]
+    try:
+        app._on_sync_finished(
+            {'fetched_records': records, 'failed_draws': [], 'cancelled': False, 'mode': 'standard'}
+        )
+        assert app._sync_applying is True
+        deadline = _time.monotonic() + 30.0
+        while app._sync_applying and _time.monotonic() < deadline:
+            qapp.processEvents()
+            _time.sleep(0.01)
+        assert app._sync_applying is False
+        assert len(fake_stats.winning_data) == before + 250
+        assert app.store.state['syncMeta']['lastSuccessDrawNo'] == 349
+    finally:
+        app.close()
+
+
+def test_restore_preimport_snapshot_roundtrip(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    import json as _json
+
+    from PyQt6.QtWidgets import QMessageBox as _QMessageBox
+
+    app, store, _fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    store.add_history_entry([1, 2, 3, 4, 5, 6], created_at='2026-04-01T10:00:00')
+    backup = tmp_path / 'backup.json'
+    backup.write_text(
+        _json.dumps(
+            {'state': {'history': [{'numbers': [7, 8, 9, 10, 11, 12], 'date': '2026-04-02T10:00:00'}]}},
+            ensure_ascii=False,
+        ),
+        encoding='utf-8',
+    )
+    monkeypatch.setattr(
+        data_page_module.QFileDialog, 'getOpenFileName', lambda *args, **_kwargs: (str(backup), '')
+    )
+    monkeypatch.setattr(
+        data_page_module.QInputDialog,
+        'getItem',
+        lambda *args, **_kwargs: ('merge 방식으로 불러오기(권장)', True),
+    )
+    monkeypatch.setattr(
+        data_page_module.QMessageBox, 'information', lambda *args, **_kwargs: None
+    )
+    try:
+        app.data_page.import_backup()
+        assert len(store.state['history']) == 2
+        snapshots = app.data_page.list_preimport_snapshots()
+        assert len(snapshots) == 1
+
+        store.clear_history()
+        assert store.state['history'] == []
+        monkeypatch.setattr(
+            data_page_module.QInputDialog,
+            'getItem',
+            lambda *args, **_kwargs: (snapshots[0].name, True),
+        )
+        monkeypatch.setattr(
+            data_page_module.QMessageBox,
+            'question',
+            lambda *args, **_kwargs: _QMessageBox.StandardButton.Yes,
+        )
+        app.data_page.restore_preimport_snapshot()
+        assert [entry['numbers'] for entry in store.state['history']] == [[1, 2, 3, 4, 5, 6]]
+    finally:
+        app.close()
+
+
+def test_sync_finished_with_db_applied_reloads_and_finalizes(
+    qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    app, store, fake_stats = _build_app(
+        monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3
+    )
+    try:
+        assert fake_stats.reloaded is False
+        app._on_sync_finished(
+            {
+                'fetched_records': [
+                    {
+                        'draw_no': 100,
+                        'numbers': [1, 2, 3, 4, 5, 6],
+                        'bonus': 7,
+                        'date': '2026-05-01',
+                        'first_prize': 0,
+                        'first_winners': 0,
+                        'total_sales': 0,
+                    }
+                ],
+                'failed_draws': [],
+                'cancelled': False,
+                'mode': 'standard',
+                'dbApplied': True,
+                'appliedCounts': {'inserted': 1, 'updated': 0, 'unchanged': 0, 'invalid': 0},
+                'insertedDraws': [100],
+            }
+        )
+        assert fake_stats.reloaded is True
+        assert app._sync_applying is False
+        assert store.state['syncMeta']['lastSuccessAt'] != ''
+    finally:
+        app.close()
+
+
+def test_wait_for_thread_joins_finishing_task(qapp: QApplication):
+    import time as _time
+
+    from klotto.ui.main_window.task_thread import TaskThread
+    from klotto.ui.main_window import window as _window_module
+
+    task = TaskThread(lambda: _time.sleep(0.3))
+    task.start()
+    try:
+        assert _window_module.LottoApp._wait_for_thread(task, 5.0) is True
+        assert not task.isRunning()
+    finally:
+        if task.isRunning():
+            task.wait(5000)
+
+
+def test_wait_for_thread_times_out_on_stuck_task(qapp: QApplication):
+    import time as _time
+
+    from klotto.ui.main_window.task_thread import TaskThread
+    from klotto.ui.main_window import window as _window_module
+
+    task = TaskThread(lambda: _time.sleep(2.0))
+    task.start()
+    try:
+        assert _window_module.LottoApp._wait_for_thread(task, 0.2) is False
+    finally:
+        task.wait(5000)
+        assert not task.isRunning()

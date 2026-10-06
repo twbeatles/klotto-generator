@@ -555,3 +555,123 @@ def test_pension720_state_dedupes_campaigns_and_backup_v5(configured_paths: dict
     assert result['pension720Campaigns'] == 1
     assert store.state['pension720Tickets'][0]['number'] == '060727'
     assert store.state['strategyPrefs']['pension720']['strategyId'] == 'trailing_match'
+
+
+def test_import_backup_twice_keeps_ticket_quantity_stable(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+    store.add_ticket([1, 2, 3, 4, 5, 6], source='generator', target_draw_no=200)
+    payload = store.export_backup_payload()
+
+    store.import_backup_payload(payload, mode='merge')
+    assert len(store.state['ticketBook']) == 1
+    assert store.state['ticketBook'][0]['quantity'] == 1
+
+    store.import_backup_payload(payload, mode='merge')
+    assert len(store.state['ticketBook']) == 1
+    assert store.state['ticketBook'][0]['quantity'] == 1
+
+
+def test_merge_ticket_entries_keeps_max_quantity(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+    base = {'numbers': [1, 2, 3, 4, 5, 6], 'targetDrawNo': 200, 'source': 'generator'}
+
+    merged = store.merge_ticket_entries([{**base, 'quantity': 3}], [{**base, 'quantity': 5}])
+    assert len(merged) == 1
+    assert merged[0]['quantity'] == 5
+
+    merged = store.merge_ticket_entries([{**base, 'quantity': 5}], [{**base, 'quantity': 3}])
+    assert len(merged) == 1
+    assert merged[0]['quantity'] == 5
+
+
+def test_merge_ticket_entries_preserves_checked_status(configured_paths: dict[str, Path]):
+    store = AppStateStore(configured_paths['app_state'])
+    checked = {'drawNo': 200, 'rank': 1, 'checkedAt': '2026-04-01T10:00:00'}
+    existing = [
+        {
+            'numbers': [1, 2, 3, 4, 5, 6],
+            'targetDrawNo': 200,
+            'source': 'generator',
+            'quantity': 2,
+            'checked': checked,
+        }
+    ]
+    incoming = [
+        {'numbers': [1, 2, 3, 4, 5, 6], 'targetDrawNo': 200, 'source': 'generator', 'quantity': 2}
+    ]
+
+    merged = store.merge_ticket_entries(existing, incoming)
+
+    assert len(merged) == 1
+    assert merged[0]['quantity'] == 2
+    assert merged[0]['checked']['rank'] == 1
+
+
+def test_save_failure_records_last_save_error(monkeypatch: pytest.MonkeyPatch, configured_paths: dict[str, Path]):
+    import klotto.data.store.base as base_module
+
+    store = AppStateStore(configured_paths['app_state'])
+    monkeypatch.setattr(base_module, 'save_json_atomic', lambda *args, **kwargs: False)
+    assert store.save() is False
+    assert store.last_save_error
+
+    monkeypatch.setattr(base_module, 'save_json_atomic', lambda *args, **kwargs: True)
+    assert store.save() is True
+    assert store.last_save_error is None
+
+
+def test_import_backup_merge_keeps_live_prefs_and_unions_presets(configured_paths: dict[str, Path]):
+    from klotto.core.strategy_catalog import create_default_strategy_request as _default_request
+
+    store = AppStateStore(configured_paths['app_state'])
+    store.state['theme'] = 'dark'
+    store.state['syncMeta'] = {**store.state['syncMeta'], 'mode': 'live_mode'}
+    live_preset = {
+        'id': 'live-1',
+        'scope': 'generator',
+        'name': 'live',
+        'request': _default_request('ensemble_weighted'),
+    }
+    store.state['strategyPresets'] = [store.normalize_strategy_preset(live_preset)]
+    store.save()
+
+    payload = {
+        'state': {
+            'theme': 'light',
+            'syncMeta': {**store.state['syncMeta'], 'mode': 'backup_mode'},
+            'strategyPresets': [
+                {
+                    'id': 'live-1',
+                    'scope': 'generator',
+                    'name': 'live-renamed',
+                    'request': _default_request('ensemble_weighted'),
+                },
+                {
+                    'id': 'backup-1',
+                    'scope': 'generator',
+                    'name': 'from-backup',
+                    'request': _default_request('ensemble_weighted'),
+                },
+            ],
+        }
+    }
+    store.import_backup_payload(payload, mode='merge')
+
+    assert store.state['theme'] == 'dark'
+    assert store.state['syncMeta']['mode'] == 'live_mode'
+    presets_raw = store.state['strategyPresets']
+    assert isinstance(presets_raw, list)
+    presets: list = list(presets_raw)
+    assert [item['id'] for item in presets] == ['live-1', 'backup-1']
+    assert presets[0]['name'] == 'live'
+
+
+def test_non_dict_app_state_is_preserved_and_flagged(configured_paths: dict[str, Path]):
+    _write_json(configured_paths['app_state'], [1, 2, 3])
+    store = AppStateStore(configured_paths['app_state'])
+
+    assert store.state_load_issue
+    backups = list(configured_paths['app_state'].parent.glob('app_state.corrupt-*.json'))
+    assert len(backups) == 1
+    assert store.state['favorites'] == []
+    assert configured_paths['app_state'].exists()

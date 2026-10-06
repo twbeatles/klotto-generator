@@ -19,6 +19,17 @@ def test_export_to_csv_escapes_formula_memo(tmp_path: Path):
     assert ',=1+1,' not in content
 
 
+def test_import_json_refuses_oversized_file(tmp_path: Path):
+    from klotto.data.exporter import MAX_JSON_IMPORT_BYTES, DataExporter
+
+    oversized = tmp_path / 'oversized.json'
+    with open(oversized, 'wb') as handle:
+        handle.truncate(MAX_JSON_IMPORT_BYTES + 1)
+
+    assert DataExporter.import_any_json(str(oversized)) is None
+    assert DataExporter.import_from_json(str(oversized)) is None
+
+
 def test_export_to_csv_keeps_plain_memo(tmp_path: Path):
     filepath = str(tmp_path / 'favorites.csv')
 

@@ -235,6 +235,9 @@ python run_klotto.py
   - 앱의 번호와 설정을 `lotto_pension_pro_backup_v5_*.json` 파일로 저장합니다.
   - 불러올 때는 기존 목록에 합치기 또는 모두 지우고 덮어쓰기 중 고를 수 있으며,
     불러오기 전 상태는 자동으로 따로 보관됩니다.
+  - 합치기는 같은 파일을 여러 번 불러와도 구매 개수가 늘어나지 않으며,
+    현재 앱의 설정(전략·알림·동기화 상태)은 그대로 유지됩니다. 불러오기 결과는 건수로 알려줍니다.
+- **불러오기 전으로 되돌리기**: 가져오기 전 자동 보관된 시점을 골라 전체 상태를 되돌립니다.
 - **📊 당첨 번호 엑셀로 저장**:
   - 버튼 한 번으로 가져온 역대 전체 회차 당첨번호, 날짜, 1등 당첨자 수, 1등 당첨금, 총 판매액을 깔끔한 엑셀 파일(`lotto_history_YYYYMMDD_HHMMSS.xlsx`)로 저장합니다.
 
@@ -298,7 +301,14 @@ python scripts/export_to_excel.py
 ```
 - SQLite 데이터베이스(`~/.lotto_generator/lotto_history.db`)를 읽어 `lotto_history_YYYYMMDD_HHMMSS.xlsx` 파일을 즉시 생성합니다.
 
-### 2. 연금복권 공식 통계 스냅샷 갱신
+### 2. 원클릭 DB·엑셀 갱신 (Windows)
+```bat
+update_lotto.bat
+```
+- 동행복권에서 빠진 회차를 가져와 DB를 채우고, 오늘 날짜의 엑셀(`lotto_history_YYYYMMDD_HHMMSS.xlsx`)을
+  리포 루트에 만듭니다. 더블클릭 한 번으로 끝납니다.
+
+### 3. 연금복권 공식 통계 스냅샷 갱신
 ```bash
 # 동행복권 공식 서버에서 최신 연금복권 데이터를 수집하여 data/pension720_stats.json 갱신
 python scripts/fetch_pension720_stats.py
@@ -307,7 +317,7 @@ python scripts/fetch_pension720_stats.py
 python scripts/fetch_pension720_stats.py --check
 ```
 
-### 3. 테스트 및 정적 검사 실행
+### 4. 테스트 및 정적 검사 실행
 ```bash
 # 단위 테스트 전체 실행
 python -m pytest -q
@@ -319,7 +329,7 @@ pyright
 python -m compileall klotto scripts run_klotto.py
 ```
 
-### 4. 독립 실행 파일 (.exe) 빌드
+### 5. 독립 실행 파일 (.exe) 빌드
 PyInstaller를 통해 배포용 단일 실행 파일을 생성할 수 있습니다.
 ```bash
 pip install pyinstaller pyinstaller-hooks-contrib
@@ -327,7 +337,7 @@ pyinstaller klottogenerator.spec
 ```
 - 빌드 완료 후 `dist/LottoPensionPro_v30.exe` 파일이 생성됩니다.
 
-### 5. 소스 패키지 구조
+### 6. 소스 패키지 구조
 화면·전략·저장소 코드를 역할별 패키지로 나눴습니다. 기존 import 경로(`klotto.core.strategy_engine`, `klotto.data.app_state`, `klotto.ui.main_window`)는 호환 래퍼로 그대로 사용할 수 있습니다.
 
 | 경로 | 역할 |
@@ -359,6 +369,9 @@ pyinstaller klottogenerator.spec
 
 ### Q4. 이전 버전에서 쓰던 번호가 사라지나요?
 > **A.** 아닙니다. 앱 실행 시 이전 파일(`favorites.json`, `history.json`, `settings.json`)을 자동으로 찾아 새 저장 형식(`app_state.json`)으로 안전하게 옮겨줍니다.
+
+### Q5. "이미 실행 중입니다"라는 메시지가 나와요.
+> **A.** 앱은 한 번에 하나만 실행됩니다. 이미 켜져 있는 창을 찾아보세요. 프로그램이 비정상 종료된 뒤라면 다음 실행 때 자동으로 정리되니 그대로 다시 실행하면 됩니다.
 
 ---
 

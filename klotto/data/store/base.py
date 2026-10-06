@@ -30,6 +30,7 @@ class StoreBaseMixin(StoreAPI):
         self.history_file = APP_CONFIG['HISTORY_FILE']
         self.settings_file = APP_CONFIG['SETTINGS_FILE']
         self.state_load_issue = None
+        self.last_save_error: Optional[str] = None
         self.state: Dict[str, Any] = self._load_state()
 
     def create_default_state(self) -> Dict[str, Any]:
@@ -112,7 +113,9 @@ class StoreBaseMixin(StoreAPI):
         if isinstance(raw, dict):
             self.state_load_issue = None
             return self.merge_state(raw)
-        if self._is_state_file_corrupt():
+        if raw is not None or self._is_state_file_corrupt():
+            # Valid JSON of the wrong type (e.g. a list) is also unusable:
+            # preserve the original bytes before replacing it.
             self.state_load_issue = self._preserve_corrupt_state()
         else:
             self.state_load_issue = None
@@ -200,5 +203,14 @@ class StoreBaseMixin(StoreAPI):
         return state
 
     def save(self) -> bool:
-        return save_json_atomic(self.state_file, self.clone_serializable_value(self.state), 'app_state')
+        ok = save_json_atomic(self.state_file, self.clone_serializable_value(self.state), 'app_state')
+        if ok:
+            self.last_save_error = None
+        else:
+            self.last_save_error = (
+                '상태 저장 실패: '
+                + dt.datetime.now().isoformat(timespec='seconds')
+            )
+            logger.error('Store save failed; last_save_error set')
+        return ok
 
