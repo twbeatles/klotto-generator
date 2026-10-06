@@ -56,3 +56,11 @@ data/*.db-journal
 mcps/
 terminals/
 .worktrees/
+
+# Agent instructions and Spec Kit setup
+/.agents/
+/.claude/
+/.grok/
+/.specify/
+/AGENTS.md
+
