@@ -64,3 +64,7 @@ terminals/
 /.specify/
 /AGENTS.md
 
+
+# AI Agent & Spec Kit (local only)
+specs/
+
