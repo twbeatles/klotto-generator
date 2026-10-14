@@ -33,7 +33,7 @@ jobs:
             libxcb-randr0 \
             libxcb-render-util0 \
             libxcb-xinerama0 \
-            libxcb-xinput0
+            libxcb-xinput0 \
             fonts-dejavu-core
 
       - name: Install dependencies
