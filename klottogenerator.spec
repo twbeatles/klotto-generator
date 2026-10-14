@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for 로또·연금복권 프로 v3.0 (onefile)."""
 
+import os
 import sys
 from importlib.util import find_spec
 from pathlib import Path
@@ -175,6 +176,15 @@ a = Analysis(
     noarchive=False,
     optimize=2,
 )
+
+# Python 3.15 abi3t: cryptography _rust.pyd links python3t.dll
+# (<prefix>\abi3t-compat), which PyInstaller does not auto-collect.
+# Without it the frozen exe dies with "DLL load failed while importing _rust".
+_py3t_dll = os.path.join(sys.base_prefix, 'abi3t-compat', 'python3t.dll')
+_py3t_dest = 'python3t.dll'
+if os.path.isfile(_py3t_dll) and not any(
+        (b[0] or '').lower() == _py3t_dest for b in a.binaries):
+    a.binaries.append((_py3t_dest, _py3t_dll, 'BINARY'))
 
 
 def filter_binaries(binaries):
