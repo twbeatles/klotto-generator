@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QCloseEvent
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,

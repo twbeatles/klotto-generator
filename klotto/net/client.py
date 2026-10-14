@@ -4,7 +4,7 @@ import json
 import urllib.error
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from klotto.core.draws import convert_new_api_response
 from klotto.logging import logger
@@ -12,8 +12,8 @@ from klotto.net.http import fetch_lotto_api_text
 
 
 class LottoApiWorker(QThread):
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
+    finished = Signal(dict)
+    error = Signal(str)
 
     def __init__(self, draw_nos: list[int], *, proxy_url: str = ""):
         super().__init__()
@@ -62,8 +62,8 @@ class LottoApiWorker(QThread):
 
 
 class LottoNetworkManager(QObject):
-    dataLoaded = pyqtSignal(dict)
-    errorOccurred = pyqtSignal(str)
+    dataLoaded = Signal(dict)
+    errorOccurred = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)

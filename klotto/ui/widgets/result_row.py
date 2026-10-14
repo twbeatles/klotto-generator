@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from klotto.ui.theme import ThemeManager
 from klotto.ui.widgets.lotto_ball import LottoBall
@@ -10,8 +10,8 @@ from klotto.ui.widgets.lotto_ball import LottoBall
 class ResultRow(QWidget):
     """하나의 로또 세트(6개 번호)를 표시하는 행 - 개선된 UX"""
 
-    favoriteClicked = pyqtSignal(list)
-    copyClicked = pyqtSignal(list)
+    favoriteClicked = Signal(list)
+    copyClicked = Signal(list)
 
     def __init__(
         self,

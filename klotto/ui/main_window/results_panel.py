@@ -1,7 +1,7 @@
 from typing import Callable, List
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
 
 from klotto.core.analysis import NumberAnalyzer
 from klotto.ui.theme import ThemeManager
@@ -9,7 +9,7 @@ from klotto.ui.widgets import ResultRow
 
 
 class ResultsPanel(QFrame):
-    cleared = pyqtSignal()
+    cleared = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)

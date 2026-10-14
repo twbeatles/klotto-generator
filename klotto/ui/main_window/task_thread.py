@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from PyQt6.QtCore import QThread, pyqtSignal
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QWidget
 
 from klotto.logging import logger
 
 
 class TaskThread(QThread):
-    resultReady = pyqtSignal(object)
-    errorOccurred = pyqtSignal(str)
+    resultReady = Signal(object)
+    errorOccurred = Signal(str)
 
     def __init__(self, fn: Callable[[], Any], parent: Optional[QWidget] = None):
         super().__init__(parent)

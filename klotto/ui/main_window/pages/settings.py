@@ -5,9 +5,9 @@ import datetime as dt
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING
 
-from PyQt6.QtCore import QByteArray, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QByteArray, QThread, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
@@ -78,9 +78,9 @@ if TYPE_CHECKING:
     from klotto.ui.main_window.window import LottoApp
 
 class SettingsPage(QWidget):
-    syncRequested = pyqtSignal()
-    fullRepairRequested = pyqtSignal()
-    syncCancelRequested = pyqtSignal()
+    syncRequested = Signal()
+    fullRepairRequested = Signal()
+    syncCancelRequested = Signal()
 
     def __init__(self, app_window: 'LottoApp'):
         super().__init__(app_window)

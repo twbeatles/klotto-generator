@@ -10,12 +10,12 @@ except Exception as e:
     cv2 = None
     HAS_CV2 = False
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QMessageBox, QFileDialog
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
-from PyQt6.QtGui import QImage, QPixmap
+from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtGui import QImage, QPixmap
 
 from klotto.utils import logger, ThemeManager
 from klotto.qr_utils import parse_lotto_qr_url
@@ -48,7 +48,7 @@ if not HAS_CV2:
     logger.error("Failed to import OpenCV (cv2)")
 
 class CameraWorker(QThread):
-    image_data = pyqtSignal(object)
+    image_data = Signal(object)
     
     def __init__(self, camera_index=0):
         super().__init__()

@@ -5,9 +5,9 @@ import datetime as dt
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, TYPE_CHECKING
 
-from PyQt6.QtCore import QByteArray, QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QCloseEvent, QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QByteArray, QThread, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,

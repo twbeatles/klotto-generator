@@ -1,6 +1,6 @@
 from typing import Any, Dict, List
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,

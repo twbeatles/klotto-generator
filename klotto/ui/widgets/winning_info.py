@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 from klotto.core.draws import estimate_latest_draw, normalize_legacy_draw_payload
 from klotto.core.stats import WinningStatsManager
@@ -14,7 +14,7 @@ from klotto.ui.widgets.lotto_ball import LottoBall
 
 
 class WinningInfoWidget(QWidget):
-    dataLoaded = pyqtSignal(dict)
+    dataLoaded = Signal(dict)
 
     def __init__(
         self,

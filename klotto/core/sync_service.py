@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from klotto.config import APP_CONFIG
 from klotto.core.draws import (
@@ -22,9 +22,9 @@ DB_LOCK_TIMEOUT_S = 30.0
 
 
 class LottoSyncWorker(QThread):
-    finished = pyqtSignal(object)
-    error = pyqtSignal(str)
-    progress = pyqtSignal(int, int)
+    finished = Signal(object)
+    error = Signal(str)
+    progress = Signal(int, int)
 
     def __init__(
         self,

@@ -8,8 +8,8 @@ import pytest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QApplication, QWidget
 
 from klotto.config import APP_CONFIG
 from klotto.data.app_state import AppStateStore
@@ -22,7 +22,7 @@ from klotto.ui.widgets import strategy_editor as strategy_editor_module
 
 
 class StubWinningInfoWidget(QWidget):
-    dataLoaded = pyqtSignal(dict)
+    dataLoaded = Signal(dict)
 
     def __init__(self, *args, **kwargs):
         super().__init__()
@@ -1032,7 +1032,7 @@ def test_sync_finish_applies_large_batch_in_chunks(qapp: QApplication, monkeypat
 def test_restore_preimport_snapshot_roundtrip(qapp: QApplication, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     import json as _json
 
-    from PyQt6.QtWidgets import QMessageBox as _QMessageBox
+    from PySide6.QtWidgets import QMessageBox as _QMessageBox
 
     app, store, _fake_stats = _build_app(
         monkeypatch, tmp_path, _sample_winning_data(), expected_latest_draw=3

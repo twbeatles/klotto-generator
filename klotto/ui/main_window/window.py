@@ -4,9 +4,9 @@ import datetime as dt
 import time
 from typing import Any, Dict, List, Optional, Sequence
 
-from PyQt6.QtCore import QByteArray, QEventLoop, Qt, QThread, QTimer
-from PyQt6.QtGui import QCloseEvent, QFont
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QByteArray, QEventLoop, Qt, QThread, QTimer
+from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,

@@ -1,7 +1,7 @@
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QListWidget, QMessageBox, QDialog
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QListWidget, QMessageBox, QDialog
 
 from klotto.ui.theme import ThemeManager
 

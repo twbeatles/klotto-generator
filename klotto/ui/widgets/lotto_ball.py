@@ -1,8 +1,8 @@
 from typing import Dict
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QLabel
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QLabel
 
 from klotto.config import LOTTO_COLORS
 

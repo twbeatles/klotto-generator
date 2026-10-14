@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -24,8 +24,8 @@ from klotto.data.app_state import AppStateStore
 
 
 class StrategyRequestEditor(QGroupBox):
-    strategiesChanged = pyqtSignal()
-    presetApplied = pyqtSignal(dict)
+    strategiesChanged = Signal()
+    presetApplied = Signal(dict)
 
     def __init__(
         self,

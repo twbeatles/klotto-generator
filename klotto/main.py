@@ -2,8 +2,8 @@ import sys
 import traceback
 from pathlib import Path
 from typing import Optional
-from PyQt6.QtCore import QLockFile
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QLockFile
+from PySide6.QtWidgets import QApplication, QMessageBox
 from .config import APP_CONFIG
 from .utils import logger
 from .ui.main_window import LottoApp
@@ -23,7 +23,7 @@ def acquire_app_lock(lock_dir: Optional[Path] = None) -> bool:
         target_dir = Path(lock_dir) if lock_dir is not None else Path(APP_CONFIG['APP_DATA_DIR'])
         target_dir.mkdir(parents=True, exist_ok=True)
         candidate = QLockFile(str(target_dir / 'app.lock'))
-        if candidate.tryLock():
+        if candidate.tryLock(0):
             _app_lock = candidate
             return True
         return False
@@ -75,7 +75,7 @@ def main():
         return
     
     # 폰트 설정 (윈도우의 경우 맑은 고딕 등)
-    from PyQt6.QtGui import QFont
+    from PySide6.QtGui import QFont
     font = QFont("Malgun Gothic", 10)
     app.setFont(font)
     

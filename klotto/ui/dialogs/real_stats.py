@@ -1,7 +1,7 @@
 from typing import List
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QDialog, QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QGroupBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from klotto.core.draws import estimate_latest_draw, normalize_legacy_draw_payload
 from klotto.core.stats import WinningStatsManager

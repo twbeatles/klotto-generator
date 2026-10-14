@@ -1,8 +1,8 @@
 from typing import List
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QImage, QPixmap
-from PyQt6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout
 
 from klotto.logging import logger
 from klotto.ui.theme import ThemeManager
