@@ -22,6 +22,9 @@ def _qt_session_teardown():
         QThreadPool.globalInstance().waitForDone(15000)
         app = QApplication.instance()
         if app is not None:
+            app.closeAllWindows()
+            for window in app.topLevelWidgets():
+                window.deleteLater()
             app.processEvents()
             app.processEvents()
     except Exception:

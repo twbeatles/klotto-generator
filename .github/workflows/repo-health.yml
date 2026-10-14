@@ -50,9 +50,7 @@ jobs:
       - name: Run pytest
         env:
           QT_QPA_PLATFORM: offscreen
-        # DIAG-ABORT(2026-10-14): temporary gdb backtrace for the
-        # post-suite abort. Revert to plain pytest once fixed.
-        run: gdb -batch -ex run -ex "thread apply all bt" --args python -m pytest -q
+        run: python -m pytest -q
 
       - name: Compile Python sources
         run: python -m compileall klotto scripts run_klotto.py klottogenerator.py
