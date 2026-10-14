@@ -34,6 +34,7 @@ jobs:
             libxcb-render-util0 \
             libxcb-xinerama0 \
             libxcb-xinput0
+            fonts-dejavu-core
 
       - name: Install dependencies
         run: |
@@ -49,10 +50,6 @@ jobs:
       - name: Run pytest
         env:
           QT_QPA_PLATFORM: offscreen
-          # DIAG-ABORT(2026-10-14): debug allocators + faulthandler to
-          # locate the post-suite heap abort (munmap/exit 134). Revert once fixed.
-          PYTHONMALLOC: debug
-          PYTHONFAULTHANDLER: 1
         run: python -m pytest -q
 
       - name: Compile Python sources
