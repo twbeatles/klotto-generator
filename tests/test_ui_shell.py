@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pytest
 
@@ -74,7 +74,7 @@ def _configure_app_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> App
 
 
 @pytest.fixture(scope='session')
-def qapp() -> QApplication:
+def qapp() -> Iterator[QApplication]:
     app = QApplication.instance() or QApplication([])
     assert isinstance(app, QApplication)
     yield app
