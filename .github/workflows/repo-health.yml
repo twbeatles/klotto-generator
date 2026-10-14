@@ -34,7 +34,7 @@ jobs:
             libxcb-render-util0 \
             libxcb-xinerama0 \
             libxcb-xinput0 \
-            fonts-dejavu-core
+            gdb
 
       - name: Install dependencies
         run: |
@@ -50,7 +50,9 @@ jobs:
       - name: Run pytest
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        # DIAG-ABORT(2026-10-14): temporary gdb backtrace for the
+        # post-suite abort. Revert to plain pytest once fixed.
+        run: gdb -batch -ex run -ex "thread apply all bt" --args python -m pytest -q
 
       - name: Compile Python sources
         run: python -m compileall klotto scripts run_klotto.py klottogenerator.py
