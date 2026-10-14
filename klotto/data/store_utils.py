@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -92,14 +93,14 @@ def save_json_atomic(path: Optional[Path], payload: Any, label: str) -> bool:
         if not locked:
             logger.error("Failed to save %s: could not acquire file lock", label)
             return False
-        temp_file = path.with_suffix(".tmp")
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f"{path.stem}-", suffix=".tmp", dir=str(path.parent))
+        os.close(fd)
+        temp_file = Path(temp_name)
         with open(temp_file, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
 
-        if path.exists():
-            os.replace(temp_file, path)
-        else:
-            os.rename(temp_file, path)
+        os.replace(temp_file, path)
         return True
     except Exception as exc:
         logger.error("Failed to save %s: %s", label, exc)
