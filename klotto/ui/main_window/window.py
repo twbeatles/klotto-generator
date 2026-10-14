@@ -568,7 +568,7 @@ class LottoApp(QMainWindow):
         try:
             ThemeManager.remove_listener(self.apply_theme)
             self._cancel_background_work()
-            encoded_geometry = self.saveGeometry().toBase64().data()
+            encoded_geometry = bytes(self.saveGeometry().toBase64().data())
             self.store.state['windowGeometry'] = encoded_geometry.decode('ascii')
             self.store.save()
         finally:
