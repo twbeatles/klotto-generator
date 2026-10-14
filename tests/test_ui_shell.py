@@ -73,11 +73,17 @@ def _configure_app_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> App
     return AppStateStore(state_dir / 'app_state.json')
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture(scope='session')
 def qapp() -> QApplication:
     app = QApplication.instance() or QApplication([])
     assert isinstance(app, QApplication)
-    return app
+    yield app
+    try:
+        app.closeAllWindows()
+        app.processEvents()
+        app.processEvents()
+    except Exception:
+        pass
 
 
 def _build_app(
